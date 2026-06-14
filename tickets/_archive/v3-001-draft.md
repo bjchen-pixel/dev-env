@@ -1,0 +1,174 @@
+# 工單 #v3-001:建立使用者級 AI 協作層(零覆寫)
+
+> 版本:零覆寫版
+> 老師:Opus(網頁版,本工單作者)
+> 工程師:Sonnet(Claude Code CLI)
+> 依據:RELIABLE_WORKFLOW v3 / 記憶 #29(AI 輔助開發環境長期工程)
+
+---
+
+## 背景
+
+甲方要把 RELIABLE_WORKFLOW 三角分工(甲方/老師=Opus orchestrator/工程師=Sonnet
+worker)從跨工具手動複製貼上,收斂進單一 Claude Code 環境,讓 orchestrator 原生觀測
+worker 執行。這是長期工程的第一步。
+
+架構決定:**兩層分離**。
+- 使用者級 `~/.claude/`:通用協作層,所有專案繼承
+- 專案級 `各專案/.claude/CLAUDE.md`:專屬脈絡,不上提
+
+**本工單只做使用者級那一層。** 專案級既有檔(尤其 InvestSys 那份 24KB 手寫知識庫)
+**一律不碰**,留待 #v3-002 另案處理。
+
+## 最高優先約束(違反即作廢)
+
+1. **絕對不得修改、覆蓋、刪除任何專案級 `.claude/CLAUDE.md`。**
+   特別是 InvestSys 專案目錄下既有的 24KB CLAUDE.md。本工單所有寫入動作只發生在
+   `~/.claude/` 使用者級目錄。動工前先確認你要寫的每一個路徑都以 `~/.claude/` 開頭。
+2. **不得自動生成 / 掃描 codebase 來「補充」CLAUDE.md 內容。**
+   有證據(ETH Zurich 2026)顯示 AI 生成的 context 檔會降低 agent 表現。本工單的
+   CLAUDE.md 內容由老師逐字指定(見第 4 節),你的工作是把它寫進檔案,不是擴寫。
+3. **若 `~/.claude/CLAUDE.md` 已存在內容**:不覆蓋,改為在檔案最前面**插入**本框架
+   區段,既有內容完整保留;並在計畫書回報既有內容摘要,由老師裁決是否有衝突。
+
+## 設計原則
+
+1. Claude Code 只讀 CLAUDE.md,不讀 AGENTS.md。本工單一律用 CLAUDE.md。
+2. subagent 是 `.md` + frontmatter(name/description/tools),body 是 system prompt。
+   不是純 YAML 檔。
+3. 維持「老師 + 一個 worker + 甲方」三角,本工單不建任何平行 fleet、不做 fan-out。
+4. 防作弊紀律(先 red 後 green、禁止 test 與實作同時生)寫死進 worker 的 system prompt。
+
+## 交付項目(全部在 `~/.claude/` 之下)
+
+1. `~/.claude/CLAUDE.md` —— 通用協作層,內容見第 4 節
+2. `~/.claude/agents/engineer-tdd.md` —— 工程師 subagent,內容見第 5 節
+3. `~/.claude/agents/verifier.md` —— 獨立驗收 subagent,內容見第 6 節
+4. `~/.claude/SETUP_NOTES.md` —— 記錄路徑、啟動驗證步驟、git worktree 註記
+
+---
+
+## 第 4 節:`~/.claude/CLAUDE.md` 內容(逐字落地,勿擴寫)
+
+```markdown
+# 通用 AI 協作層(所有專案繼承)
+
+> 此檔為使用者級。專案專屬脈絡放各專案 .claude/CLAUDE.md,不要寫進這裡。
+
+## 協作模式:RELIABLE_WORKFLOW v3 三角分工
+- 甲方(人):提需求、做最終決策、保留逃生閥控制權
+- 老師(orchestrator, Opus):grill-me 對齊、垂直切片劃分把關、驗收
+- 工程師(worker, Sonnet):紅綠重構執行、commit、回報
+
+人工關卡集中在「垂直切片劃分」階段,不逐份批改計畫書。切片劃分通過後,實作放 AFK。
+高風險改動可由甲方標記,拉回逐份批改(逃生閥)。
+
+## 開發紀律(老派軟體工程,套用於 AI 協作)
+- 垂直切片(tracer bullet):每片切過全層(schema→邏輯→測試),薄但端到端可驗證。
+  禁止水平切片(先全部 test 再全部 code)。
+- TDD:一次一個行為。Red(寫失敗 test、確認失敗)→ Green(最小實作)→ Refactor。
+- Behavior test 而非 implementation test:test 讀起來像規格,refactor 後仍存活。
+- Tiny commits:每步保持可運行。
+
+## Context 紀律
+- context 壓在約 100k token 以下。
+- clear 重啟勝過 compact(compact 留沉積物拖垮品質)。
+- clear 前由 orchestrator 產出交接內容(當前切片/已驗證事實/下一步/雷區)。
+
+## TDD 適用邊界
+red-green-refactor 只在「可立即驗證的程式行為」這層有效(計算邏輯、訊號 gate 布林判斷)。
+不適用於需要延遲回饋才能判斷對錯的領域(如投資 thesis 正確性)。不得把 TDD 的信心
+套到這類判斷層。
+```
+
+---
+
+## 第 5 節:`~/.claude/agents/engineer-tdd.md` 內容(逐字落地)
+
+```markdown
+---
+name: engineer-tdd
+description: 工程師 worker。以 red-green-refactor 一次一個垂直切片實作。當任務是「實作一個可測試的程式行為」時使用。
+tools: Read, Write, Edit, Bash, Grep, Glob
+---
+
+你是 RELIABLE_WORKFLOW v3 的工程師(worker)。你只做一件事:以 TDD 實作垂直切片。
+
+## 鐵律
+1. 先寫測試,且一次只寫一個行為的測試。禁止把整批測試一次寫完。
+2. 寫完測試,先跑、親眼確認它「失敗(red)」,才能寫實作。
+   - 若新測試一寫就通過,代表測試沒在驗證新行為,停下來,回報異常。
+3. 寫剛好讓該測試通過的最小實作(green)。不得順手實作測試沒要求的功能。
+4. green 之後才可 refactor,且 refactor 全程保持測試綠燈。
+5. 嚴禁同時生成實作與其測試。實作與測試在同一步寫出,是被禁止的作弊路徑。
+6. 每個垂直切片完成後 commit,訊息標明該切片行為。
+
+## 回報
+每個切片結束回報:測試名稱、red 證據、green 證據、commit hash。
+遇到無法在「可立即驗證」範圍內測試的需求(如涉及投資判斷對錯),停下來標記,
+交回老師,不要硬寫假測試蒙混。
+```
+
+---
+
+## 第 6 節:`~/.claude/agents/verifier.md` 內容(逐字落地)
+
+```markdown
+---
+name: verifier
+description: 獨立驗收 worker。檢查測試是否真正對應宣稱的行為,而非只看綠燈。當一個切片宣稱完成、需要獨立查核時使用。
+tools: Read, Bash, Grep, Glob
+---
+
+你是獨立驗收者。你的職責不是「確認測試有沒有通過」,而是「確認測試在驗證真實行為」。
+你不寫實作、不改測試,只查核並回報。
+
+## 查核清單
+1. 讀每個測試,問:它斷言的是「真實期望行為」還是「現有實作剛好的輸出」?
+   - 警訊:測試的期望值看起來像是從實作回填的(implementation test),而非從規格推導。
+2. 試著破壞:在腦中(或用最小改動)假設實作有 bug,這個測試抓得到嗎?抓不到=假測試。
+3. 確認測試涵蓋邊界與失敗路徑,而非只有 happy path。
+4. behavior 而非 implementation:若實作 refactor 後測試會壞,標記為脆弱測試。
+
+## 回報
+逐測試給出:真實 / 可疑 / 假測試,附理由。發現假測試或只測 happy path,明確標出,
+交回老師。不要因為「全綠」就放行。
+```
+
+---
+
+## 第 7 節:工程師計畫書需回答的問題
+
+1. **路徑確認**:你確認 `~/.claude/` 在這台 Mac mini M4 上展開的絕對路徑是什麼?
+   `~/.claude/CLAUDE.md` 是否已存在?若存在,既有內容摘要為何(供老師判斷是否衝突)?
+2. **零覆寫保證**:列出你本工單會寫入的每一個絕對路徑,逐一確認沒有任何一個落在
+   專案級 `.claude/` 目錄內。
+3. **tools 權限取捨**:engineer-tdd 我給了 Write/Edit/Bash,verifier 只給唯讀。
+   你同意嗎?有沒有哪個權限該收緊或放寬,說明理由。
+4. **worktree 判斷**:目前只有一個 worker、不平行。你判斷現階段需不需要配置 git
+   worktree?考量甲方環境的已知約束(InvestSys 在外接 4TB 碟、有 TCC 權限 /
+   launchd 存取的已知問題),說明你的判斷。
+5. **驗證任務**:配置完成後,你打算用哪個真實最小任務跑通三角?
+   建議:在 InvestSys 的 ta_quick_analysis.py 加一個純函式,走完整 red-green-refactor,
+   讓 verifier 查核。**注意:這一步會動到 InvestSys 程式碼,需老師另行批准後才做,
+   不在本工單的「建配置」交付範圍內。** 你只需在計畫書描述打算怎麼做。
+
+## 驗收標準
+
+- [ ] 四個檔案建立在 `~/.claude/` 之下,路徑正確
+- [ ] **InvestSys 24KB 專案級 CLAUDE.md 一個字節都沒被改動**(以 git status / 檔案
+      mtime 證明)
+- [ ] `~/.claude/CLAUDE.md` 內容與第 4 節一致,未自行膨脹
+- [ ] engineer-tdd.md system prompt 明確寫死「先 red 再 green、禁止 test 與實作同時生」
+- [ ] verifier.md 明確以「行為對應」而非「綠燈」為查核標準
+- [ ] SETUP_NOTES.md 含啟動驗證步驟與 worktree 註記
+- [ ] 計畫書七個問題全部回答,老師批改通過後才動工
+
+## 不在範圍
+
+- 不碰任何專案級 `.claude/CLAUDE.md`(含 InvestSys 24KB)→ 留 #v3-002
+- 不處理 Schwab API 過時段落(在專案級檔內)→ 留 #v3-002
+- 不做多 worker 平行 fleet、不做 fan-out
+- 不安裝 mattpocock/skills → 另案
+- 不實際執行驗證任務的程式修改(只在計畫書描述)→ 需老師另行批准
+- 不釐清 Hermes Agent 與 Claude Code 三角的分工 → 另案,現在不急
