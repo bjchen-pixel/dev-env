@@ -64,17 +64,37 @@ esac
 MODE="${V3_EDIT_PLAN_GATE:-advice}"
 
 # --- PlanStatusGuard ---------------------------------------------------------
+# allow-list semantics: only an active plan whose status is exactly "Approved"
+# passes. No active plan / any other status (Draft/Annotating/typo/unknown) ->
+# unapproved -> block (per mode).
 PLAN=$(get_active_plan "$ROOT")
-if [ -z "$PLAN" ]; then
-  # no active plan -> unapproved.
-  if [ "$MODE" = "enforce" ]; then
-    cat >&2 <<EOF
+if [ -n "$PLAN" ]; then
+  PLAN_DISPLAY="$PLAN"
+  STATUS=$(get_plan_status "$ROOT/$PLAN")
+  if [ -n "$STATUS" ]; then
+    STATUS_DISPLAY="$STATUS"
+  else
+    STATUS_DISPLAY="(no Status field)"
+  fi
+else
+  PLAN_DISPLAY="(none)"
+  STATUS=""
+  STATUS_DISPLAY="(no marker)"
+fi
+
+if [ "$STATUS" = "Approved" ]; then
+  exit 0   # approved -> allow.
+fi
+
+# unapproved.
+if [ "$MODE" = "enforce" ]; then
+  cat >&2 <<EOF
 [PlanStatusGuard] BLOCKED (automated quality gate, exit 2 — this is NOT a user rejection).
 
 This repo's pre-edit gate requires an APPROVED plan before editing implementation files.
 Reason: the active plan is not approved.
-  - active plan: (none)
-  - current status: (no marker)
+  - active plan: $PLAN_DISPLAY
+  - current status: $STATUS_DISPLAY
   - blocked edit target: $REL
 
 This is a deterministic workflow guard, not a human saying no. Do NOT stop and silently wait.
@@ -86,8 +106,7 @@ do ONE of these:
      are always allowed — e.g. improve the plan itself so it can be approved.
   3. Or, if this gate is misfiring, the user can set V3_EDIT_PLAN_GATE=advice (warn-only) or =off.
 EOF
-    exit 2
-  fi
+  exit 2
 fi
 
 exit 0

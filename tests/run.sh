@@ -54,6 +54,25 @@ make_fixture_repo() {
   printf '%s' "$dir"
 }
 
+# write_plan_status <dir> <status>  -> writes plans/foo.md with given Status field
+write_plan_status() {
+  local dir="$1" status="$2"
+  printf '# foo\n\n**Status**: %s\n' "$status" > "$dir/plans/foo.md"
+}
+
+# set_marker <dir> <plan_rel> [root_override]
+#   marker line1 = plan_rel; line2 = canonical repo root (or root_override).
+set_marker() {
+  local dir="$1" plan_rel="$2" root_override="${3:-}"
+  local root
+  if [ -n "$root_override" ]; then
+    root="$root_override"
+  else
+    root=$(cd "$dir" && pwd -P)
+  fi
+  printf '%s\n%s\n' "$plan_rel" "$root" > "$dir/.ai/harness/active-plan"
+}
+
 # make_stdin <absolute_file_path> <cwd>
 # emits the PreToolUse Edit JSON payload. file_path MUST be absolute (real payload shape).
 make_stdin() {
@@ -94,10 +113,38 @@ test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr() {
   rm -rf "$dir"
 }
 
+test_enforce_approved_edit_impl_passes_silent() {
+  # enforce + Approved active plan + edit impl file -> exit 0, silent.
+  local dir
+  dir=$(make_fixture_repo)
+  write_plan_status "$dir" Approved
+  set_marker "$dir" "plans/foo.md"
+  run_guard "$dir" enforce "$dir/signals/x.py"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
+test_enforce_draft_edit_impl_blocks() {
+  # enforce + Draft active plan (unapproved) + edit impl -> exit 2, stderr msg.
+  local dir
+  dir=$(make_fixture_repo)
+  write_plan_status "$dir" Draft
+  set_marker "$dir" "plans/foo.md"
+  run_guard "$dir" enforce "$dir/signals/x.py"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "PlanStatusGuard" "stderr has guard name"
+  assert_contains "$ERR" "Draft" "stderr prints current status value"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
+test_enforce_approved_edit_impl_passes_silent
+test_enforce_draft_edit_impl_blocks
 "
 
 for t in $TESTS; do

@@ -35,3 +35,16 @@ get_active_plan() {
   printf '%s' "$plan_rel"
   return 0
 }
+
+# get_plan_status <plan_file>
+#   Prints the first **Status**: field value (trimmed) on stdout, returns 0.
+#   Returns 1 (no stdout) if file missing or no Status field found.
+get_plan_status() {
+  local plan_file="$1"
+  [ -f "$plan_file" ] || return 1
+  local status
+  status=$(awk '/\*\*Status\*\*:/ {sub(/^.*\*\*Status\*\*:[ \t]*/,""); sub(/[ \t]*$/,""); print; exit}' "$plan_file")
+  [ -n "$status" ] || return 1
+  printf '%s' "$status"
+  return 0
+}
