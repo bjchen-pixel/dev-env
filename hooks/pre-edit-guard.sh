@@ -44,15 +44,32 @@ ROOT=$(cd "$CWD" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)
 ROOT=$(cd "$ROOT" 2>/dev/null && pwd -P) || exit 0
 
 # --- relativize file_path to repo root (MUST-1) ------------------------------
-# canonicalize the file_path's directory, then re-append basename.
+# Canonicalize the file_path's directory, then re-append basename.
+# For new files under not-yet-existing dirs, the immediate dirname can't be
+# `cd`-ed into; walk up to the nearest existing ancestor, canonicalize THAT
+# (to resolve symlinks like macOS /var -> /private/var), then re-append the
+# not-yet-existing tail. This keeps repo-internal new files inside the repo
+# root for the prefix test, rather than falling back to a raw symlink path
+# that would be misjudged as outside-repo.
 fp_dir=$(dirname "$FILE_PATH")
 fp_base=$(basename "$FILE_PATH")
 fp_dir_c=$(cd "$fp_dir" 2>/dev/null && pwd -P)
-# if the dir does not exist, fall back to raw path (cannot canonicalize).
 if [ -n "$fp_dir_c" ]; then
   FILE_ABS="$fp_dir_c/$fp_base"
 else
-  FILE_ABS="$FILE_PATH"
+  # nearest-existing-ancestor canonicalization.
+  anc="$fp_dir"
+  tail="$fp_base"
+  while [ "$anc" != "/" ] && [ ! -d "$anc" ]; do
+    tail="$(basename "$anc")/$tail"
+    anc=$(dirname "$anc")
+  done
+  anc_c=$(cd "$anc" 2>/dev/null && pwd -P)
+  if [ -n "$anc_c" ]; then
+    FILE_ABS="$anc_c/$tail"
+  else
+    FILE_ABS="$FILE_PATH"
+  fi
 fi
 
 case "$FILE_ABS" in

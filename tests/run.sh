@@ -217,6 +217,21 @@ test_abs_path_outside_repo_passes() {
   rm -rf "$dir" "$outside"
 }
 
+test_repo_internal_new_file_in_new_dir_gated() {
+  # Write a NOT-YET-EXISTING file under a NOT-YET-EXISTING dir, INSIDE the repo.
+  # dirname can't be canonicalized -> guard falls back to raw path. The fallback
+  # must NOT cause a repo-internal new file to be misjudged as outside-repo.
+  # enforce + no plan -> exit 2.
+  local dir
+  dir=$(make_fixture_repo)
+  # signals/new/ does not exist; y.py does not exist.
+  run_guard "$dir" enforce "$dir/signals/new/y.py"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "PlanStatusGuard" "stderr has guard name"
+  assert_contains "$ERR" "signals/new/y.py" "blocked target is the repo-relative path"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -229,6 +244,7 @@ test_advice_no_plan_edit_impl_warns_exit0
 test_off_no_plan_edit_impl_silent
 test_missing_file_path_in_stdin_passes
 test_abs_path_outside_repo_passes
+test_repo_internal_new_file_in_new_dir_gated
 "
 
 for t in $TESTS; do
