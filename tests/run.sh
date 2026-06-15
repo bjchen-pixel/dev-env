@@ -272,6 +272,52 @@ test_file_path_extracted_without_jq_matches_jq() {
   rm -f "$out1" "$err1" "$out2" "$err2"; rm -rf "$dir" "$jqbin"
 }
 
+# run_guard_raw_cwd <dir> <mode> <abs_file_path> <raw_cwd> -> sets RC/OUT/ERR
+# Feeds raw_cwd verbatim in stdin (may be a symlink path) and runs the guard
+# from raw_cwd, forcing the guard to canonicalize it itself.
+run_guard_raw_cwd() {
+  local dir="$1" mode="$2" fp="$3" raw_cwd="$4"
+  local out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  make_stdin "$fp" "$raw_cwd" \
+    | ( cd "$raw_cwd" && V3_EDIT_PLAN_GATE="$mode" bash "$GUARD" ) >"$out_f" 2>"$err_f"
+  RC=$?; OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+test_marker_root_worktree_consistency_symlink_match() {
+  # case (1) TRUE MATCH via macOS /var -> /private/var symlink.
+  # marker line2 = canonical root; cwd fed as the RAW symlink path. The guard
+  # canonicalizes cwd, so root matches -> NOT degraded -> normal plan judgment.
+  # Plan is Draft (unapproved) -> enforce blocks BECAUSE of the plan, and stderr
+  # must name the active plan + its Draft status (proof it went through plan path,
+  # not the degraded "no marker" path).
+  local dir
+  dir=$(make_fixture_repo)          # $dir is a /var symlink path on macOS
+  write_plan_status "$dir" Draft
+  set_marker "$dir" "plans/foo.md"  # line2 = canonical /private/var root
+  # feed RAW symlink cwd and RAW symlink file_path
+  run_guard_raw_cwd "$dir" enforce "$dir/signals/x.py" "$dir"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "plans/foo.md" "stderr names active plan (not degraded)"
+  assert_contains "$ERR" "Draft" "stderr shows Draft status (went through plan path)"
+  rm -rf "$dir"
+}
+
+test_marker_root_worktree_consistency_root_mismatch_degrades() {
+  # case (2) TRUE MISMATCH: marker line2 points elsewhere -> get_active_plan
+  # returns 1 -> degraded to "no active plan" -> enforce blocks with (none)/(no marker).
+  local dir other
+  dir=$(make_fixture_repo)
+  other=$(mktemp -d)   # an unrelated existing dir
+  write_plan_status "$dir" Approved   # even Approved must be ignored on mismatch
+  set_marker "$dir" "plans/foo.md" "$(cd "$other" && pwd -P)"
+  run_guard "$dir" enforce "$dir/signals/x.py"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "active plan: (none)" "degraded: no active plan"
+  assert_contains "$ERR" "(no marker)" "degraded: no status"
+  rm -rf "$dir" "$other"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -286,6 +332,8 @@ test_missing_file_path_in_stdin_passes
 test_abs_path_outside_repo_passes
 test_repo_internal_new_file_in_new_dir_gated
 test_file_path_extracted_without_jq_matches_jq
+test_marker_root_worktree_consistency_symlink_match
+test_marker_root_worktree_consistency_root_mismatch_degrades
 "
 
 for t in $TESTS; do
