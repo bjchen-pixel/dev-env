@@ -318,6 +318,26 @@ test_marker_root_worktree_consistency_root_mismatch_degrades() {
   rm -rf "$dir" "$other"
 }
 
+test_workflow_surface_md_and_docs_pass() {
+  # Remaining workflow surfaces (docs/ tasks/ .ai/ .claude/ prefix, *.md suffix
+  # outside plans/) must all pass silently under enforce + no plan.
+  local dir t fp
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/docs" "$dir/tasks" "$dir/.claude"
+  : > "$dir/docs/spec.md"
+  : > "$dir/tasks/current.md"
+  : > "$dir/.ai/harness/notes.txt"
+  : > "$dir/.claude/settings.json"
+  : > "$dir/README.md"        # *.md at repo root (suffix rule)
+  for t in docs/spec.md tasks/current.md .ai/harness/notes.txt .claude/settings.json README.md; do
+    run_guard "$dir" enforce "$dir/$t"
+    assert_eq 0 "$RC" "exit code for $t"
+    assert_eq "" "$OUT" "stdout empty for $t"
+    assert_eq "" "$ERR" "stderr empty for $t"
+  done
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -334,6 +354,7 @@ test_repo_internal_new_file_in_new_dir_gated
 test_file_path_extracted_without_jq_matches_jq
 test_marker_root_worktree_consistency_symlink_match
 test_marker_root_worktree_consistency_root_mismatch_degrades
+test_workflow_surface_md_and_docs_pass
 "
 
 for t in $TESTS; do
