@@ -70,6 +70,7 @@ esac
 
 # --- gate mode ---------------------------------------------------------------
 MODE="${V3_EDIT_PLAN_GATE:-advice}"
+[ "$MODE" = "off" ] && exit 0   # off -> silent allow.
 
 # --- PlanStatusGuard ---------------------------------------------------------
 # allow-list semantics: only an active plan whose status is exactly "Approved"
