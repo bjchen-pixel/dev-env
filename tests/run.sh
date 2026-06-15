@@ -188,6 +188,22 @@ test_off_no_plan_edit_impl_silent() {
   rm -rf "$dir"
 }
 
+test_missing_file_path_in_stdin_passes() {
+  # stdin payload without a file_path -> fail-soft, exit 0 silent.
+  local dir
+  dir=$(make_fixture_repo)
+  local out_f err_f json
+  out_f=$(mktemp); err_f=$(mktemp)
+  json='{"session_id":"t","cwd":"'"$(cd "$dir" && pwd -P)"'","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"old_string":"a","new_string":"b"}}'
+  printf '%s' "$json" \
+    | ( cd "$dir" && V3_EDIT_PLAN_GATE=enforce bash "$GUARD" ) >"$out_f" 2>"$err_f"
+  RC=$?; OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -198,6 +214,7 @@ test_enforce_annotating_edit_impl_blocks
 test_enforce_no_plan_edit_plan_surface_passes
 test_advice_no_plan_edit_impl_warns_exit0
 test_off_no_plan_edit_impl_silent
+test_missing_file_path_in_stdin_passes
 "
 
 for t in $TESTS; do
