@@ -152,6 +152,20 @@ test_enforce_annotating_edit_impl_blocks() {
   rm -rf "$dir"
 }
 
+test_enforce_no_plan_edit_plan_surface_passes() {
+  # enforce + NO active plan + edit a workflow surface (plans/foo.md)
+  # -> exit 0 silent. Surface bypass MUST run before PlanStatusGuard.
+  local dir
+  dir=$(make_fixture_repo)
+  # no marker => unapproved; but target is a workflow surface, so allow.
+  : > "$dir/plans/foo.md"
+  run_guard "$dir" enforce "$dir/plans/foo.md"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -159,6 +173,7 @@ test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
 test_enforce_annotating_edit_impl_blocks
+test_enforce_no_plan_edit_plan_surface_passes
 "
 
 for t in $TESTS; do

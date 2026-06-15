@@ -60,6 +60,14 @@ case "$FILE_ABS" in
   *) exit 0 ;;   # outside repo root -> not in scope, allow.
 esac
 
+# --- workflow-surface bypass (MUST run before PlanStatusGuard) ----------------
+# REL hitting a workflow surface (plans/ tasks/ docs/ .ai/ .claude/ prefix, or
+# *.md suffix) is always allowed, silently, in any plan state. This resolves the
+# stderr escape-hatch ("go edit the plan") which would otherwise be blocked.
+case "$REL" in
+  plans/*|tasks/*|docs/*|.ai/*|.claude/*|*.md) exit 0 ;;
+esac
+
 # --- gate mode ---------------------------------------------------------------
 MODE="${V3_EDIT_PLAN_GATE:-advice}"
 
