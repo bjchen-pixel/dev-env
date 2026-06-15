@@ -204,6 +204,19 @@ test_missing_file_path_in_stdin_passes() {
   rm -rf "$dir"
 }
 
+test_abs_path_outside_repo_passes() {
+  # absolute file_path landing OUTSIDE the repo root -> not in scope, exit 0 silent.
+  local dir outside
+  dir=$(make_fixture_repo)
+  outside=$(mktemp -d)
+  : > "$outside/elsewhere.py"
+  run_guard "$dir" enforce "$outside/elsewhere.py"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir" "$outside"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -215,6 +228,7 @@ test_enforce_no_plan_edit_plan_surface_passes
 test_advice_no_plan_edit_impl_warns_exit0
 test_off_no_plan_edit_impl_silent
 test_missing_file_path_in_stdin_passes
+test_abs_path_outside_repo_passes
 "
 
 for t in $TESTS; do
