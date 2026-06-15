@@ -198,20 +198,24 @@ test 在 `mktemp -d` 建臨時 repo,`git init`,結構:
 
 **後續 test 順序表**(逐條 red→green,一次一行為;每條都是獨立 fixture):
 
-| # | test 名稱 | 新增行為(這條才驗證的) | 關鍵斷言 |
-|---|---|---|---|
-| 1 | `test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr` | enforce+無plan+改實作 → 擋 | exit 2 / 訊息在 stderr / stdout 無 |
-| 2 | `test_enforce_approved_edit_impl_passes_silent` | Approved 放行(引入 get_plan_status + Approved 分支) | exit 0 / stdout 空 / stderr 空 |
-| 3 | `test_enforce_draft_edit_impl_blocks` | Draft 視為未核准 → 擋 | exit 2 / stderr 有訊息 |
-| 4 | `test_enforce_annotating_edit_impl_blocks` | Annotating 視為未核准 → 擋 | exit 2 / stderr 有訊息 |
-| 5 | `test_enforce_no_plan_edit_plan_surface_passes` | 改 `plans/foo.md` → workflow surface 放行(即使未核准) | exit 0 / 靜默 |
-| 6 | `test_advice_no_plan_edit_impl_warns_exit0` | advice 模式 → 不擋只提醒(提醒走 stdout) | exit 0 / stdout 有提醒 / stderr 空 |
-| 7 | `test_off_no_plan_edit_impl_silent` | off 模式 → 完全靜默放行 | exit 0 / stdout 空 / stderr 空 |
-| 8 | `test_missing_file_path_in_stdin_passes` | stdin 無 file_path → fail-soft 放行 | exit 0 |
-| 9 | `test_abs_path_outside_repo_passes` | file_path 絕對且**落在 repo root 之外** → 放行(repo 外不管轄) | exit 0 / 靜默 |
-| 10 | `test_file_path_extracted_without_jq_matches_jq` | jq 缺席 awk fallback 取 file_path 與 jq 一致 | 兩路徑萃出值相等 |
-| 11 | `test_marker_root_worktree_consistency` | Q4 兩 case:① symlink 真匹配仍走正常判斷 ② root 指別處 → 降級無 plan | ① 同 repo→不降級 ② get_active_plan return 1 → enforce 下 exit 2 |
-| 12 | `test_workflow_surface_md_and_docs_pass` | `docs/ tasks/ .ai/ .claude/ *.md` 各放行(補齊 surface 清單) | exit 0 / 靜默 |
+| # | 狀態 | test 名稱 | 新增行為(這條才驗證的) | 關鍵斷言 |
+|---|---|---|---|---|
+| 1 | [x] | `test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr` | enforce+無plan+改實作 → 擋 | exit 2 / 訊息在 stderr / stdout 無 |
+| 2 | [x] | `test_enforce_approved_edit_impl_passes_silent` | Approved 放行(引入 get_plan_status + Approved 分支) | exit 0 / stdout 空 / stderr 空 |
+| 3 | [x] | `test_enforce_draft_edit_impl_blocks` | Draft 視為未核准 → 擋(此條 red 才逼出 get_plan_status) | exit 2 / stderr 有訊息 + 印 Draft |
+| 4 | [x]※ | `test_enforce_annotating_edit_impl_blocks` | Annotating 視為未核准 → 擋 | exit 2 / stderr 印 Annotating |
+| 5 | [x] | `test_enforce_no_plan_edit_plan_surface_passes` | 改 `plans/foo.md` → workflow surface 放行(即使未核准) | exit 0 / 靜默 |
+| 6 | [x] | `test_advice_no_plan_edit_impl_warns_exit0` | advice 模式 → 不擋只提醒(提醒走 stdout) | exit 0 / stdout 有提醒 / stderr 空 |
+| 7 | [x] | `test_off_no_plan_edit_impl_silent` | off 模式 → 完全靜默放行 | exit 0 / stdout 空 / stderr 空 |
+| 8 | [x]※ | `test_missing_file_path_in_stdin_passes` | stdin 無 file_path → fail-soft 放行 | exit 0 |
+| 9 | [x]※ | `test_abs_path_outside_repo_passes` | file_path 絕對且**落在 repo root 之外** → 放行(repo 外不管轄) | exit 0 / 靜默 |
+| +5 | [x] | `test_repo_internal_new_file_in_new_dir_gated` | (綁定約束 #5)repo 內新檔在新目錄 → fallback 不漏判 repo 外 → 仍擋 | exit 2 / stderr 印 signals/new/y.py |
+| 10 | [x]※ | `test_file_path_extracted_without_jq_matches_jq` | jq 缺席 awk fallback 取 file_path 與 jq 一致 | jq vs no-jq exit/stderr 全等 |
+| 11a | [x]※ | `test_marker_root_worktree_consistency_symlink_match` | Q4 case①:symlink 真匹配仍走正常判斷 | 走 plan 路徑:stderr 印 plans/foo.md + Draft |
+| 11b | [x]※ | `test_marker_root_worktree_consistency_root_mismatch_degrades` | Q4 case②:root 指別處 → 降級無 plan(Approved 也忽略) | get_active_plan return 1 → stderr 印 (none)/(no marker) |
+| 12 | [x]※ | `test_workflow_surface_md_and_docs_pass` | `docs/ tasks/ .ai/ .claude/ *.md` 各放行(補齊 surface 清單) | exit 0 / 靜默 |
+
+※ = witness/regression test(一寫即綠,驗證的是先前 green 已實作的既有行為或邊界,非由此條 red 驅動新實作)。誠實標記,未偽造 red。真正由 red 驅動新實作的:#1(地基)、#2+#3(get_plan_status + allow-list)、#5(surface bypass)、#6(advice)、#7(off)、+5(nearest-ancestor canonicalization 修漏)。
 
 (完整 4×2×3=24 格決策表以參數化 helper 補滿;上表是逐行為推進的骨幹,每行為一個獨立 red→green→可選 refactor。)
 
