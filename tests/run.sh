@@ -139,12 +139,26 @@ test_enforce_draft_edit_impl_blocks() {
   rm -rf "$dir"
 }
 
+test_enforce_annotating_edit_impl_blocks() {
+  # enforce + Annotating active plan (unapproved) + edit impl -> exit 2, stderr.
+  local dir
+  dir=$(make_fixture_repo)
+  write_plan_status "$dir" Annotating
+  set_marker "$dir" "plans/foo.md"
+  run_guard "$dir" enforce "$dir/signals/x.py"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "PlanStatusGuard" "stderr has guard name"
+  assert_contains "$ERR" "Annotating" "stderr prints current status value"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
+test_enforce_annotating_edit_impl_blocks
 "
 
 for t in $TESTS; do
