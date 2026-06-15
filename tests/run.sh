@@ -232,6 +232,46 @@ test_repo_internal_new_file_in_new_dir_gated() {
   rm -rf "$dir"
 }
 
+test_file_path_extracted_without_jq_matches_jq() {
+  # With jq MASKED (PATH stripped of jq), the awk fallback must extract the same
+  # file_path -> same gate decision as the jq path. Use enforce+no-plan: the
+  # stderr must carry the correct repo-relative target in BOTH runs.
+  local dir
+  dir=$(make_fixture_repo)
+  local cwd; cwd=$(cd "$dir" && pwd -P)
+
+  # Run 1: normal (jq available).
+  local out1 err1 rc1
+  out1=$(mktemp); err1=$(mktemp)
+  make_stdin "$dir/signals/x.py" "$cwd" \
+    | ( cd "$dir" && V3_EDIT_PLAN_GATE=enforce bash "$GUARD" ) >"$out1" 2>"$err1"
+  rc1=$?
+
+  # Run 2: jq masked. Build a tmp bin with only non-jq tools the guard needs.
+  local jqbin; jqbin=$(mktemp -d)
+  local t
+  for t in bash sh cat awk sed dirname basename pwd git grep env mktemp rm printf; do
+    local p; p=$(command -v "$t" 2>/dev/null)
+    [ -n "$p" ] && ln -sf "$p" "$jqbin/$t"
+  done
+  # sanity: jq must NOT be resolvable under this PATH
+  local out2 err2 rc2
+  out2=$(mktemp); err2=$(mktemp)
+  make_stdin "$dir/signals/x.py" "$cwd" \
+    | ( cd "$dir" && PATH="$jqbin" V3_EDIT_PLAN_GATE=enforce bash "$GUARD" ) >"$out2" 2>"$err2"
+  rc2=$?
+
+  if PATH="$jqbin" command -v jq >/dev/null 2>&1; then
+    fail "jq mask ineffective: jq still resolvable under masked PATH"
+  fi
+  assert_eq "$rc1" "$rc2" "exit code parity (jq vs no-jq)"
+  assert_eq 2 "$rc2" "no-jq still blocks"
+  assert_contains "$(cat "$err2")" "signals/x.py" "no-jq stderr carries correct target"
+  assert_eq "$(cat "$err1")" "$(cat "$err2")" "stderr parity (jq vs no-jq)"
+
+  rm -f "$out1" "$err1" "$out2" "$err2"; rm -rf "$dir" "$jqbin"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -245,6 +285,7 @@ test_off_no_plan_edit_impl_silent
 test_missing_file_path_in_stdin_passes
 test_abs_path_outside_repo_passes
 test_repo_internal_new_file_in_new_dir_gated
+test_file_path_extracted_without_jq_matches_jq
 "
 
 for t in $TESTS; do
