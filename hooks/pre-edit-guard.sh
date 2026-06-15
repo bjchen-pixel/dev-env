@@ -117,4 +117,7 @@ EOF
   exit 2
 fi
 
+# advice mode (or any non-enforce mode that reaches here): warn on stdout, allow.
+printf '[PlanStatusGuard] advice: active plan not approved (status: %s) for %s. Not blocking (advice mode).\n' \
+  "$STATUS_DISPLAY" "$REL"
 exit 0

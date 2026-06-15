@@ -166,6 +166,17 @@ test_enforce_no_plan_edit_plan_surface_passes() {
   rm -rf "$dir"
 }
 
+test_advice_no_plan_edit_impl_warns_exit0() {
+  # advice + NO active plan + edit impl -> exit 0, warning on stdout, stderr empty.
+  local dir
+  dir=$(make_fixture_repo)
+  run_guard "$dir" advice "$dir/signals/x.py"
+  assert_eq 0 "$RC" "exit code"
+  assert_contains "$OUT" "PlanStatusGuard" "stdout has advice"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -174,6 +185,7 @@ test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
 test_enforce_annotating_edit_impl_blocks
 test_enforce_no_plan_edit_plan_surface_passes
+test_advice_no_plan_edit_impl_warns_exit0
 "
 
 for t in $TESTS; do
