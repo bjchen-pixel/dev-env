@@ -1,0 +1,37 @@
+#!/bin/bash
+# v3-005 hooks/lib/workflow-state.sh — shared workflow-state helpers.
+# bash 3.2 compatible. No LLM, no network.
+#
+# Convention: status via return code (0=ok/true, non-0=fail/false);
+#             data via stdout.
+
+# get_active_plan
+#   Reads .ai/harness/active-plan marker (relative to repo root = $1, or CWD).
+#   Marker line 1 = plan path (relative to repo root); line 2 = canonical repo root.
+#   Returns 0 and prints plan path on stdout if a valid active plan exists.
+#   Returns 1 (no stdout) if: no marker / plan file missing / worktree root mismatch.
+#
+#   $1 (optional) = canonical repo root. Defaults to `pwd -P`.
+get_active_plan() {
+  local root="${1:-$(pwd -P)}"
+  local marker="$root/.ai/harness/active-plan"
+  [ -f "$marker" ] || return 1
+
+  local plan_rel marker_root
+  plan_rel=$(sed -n '1p' "$marker")
+  marker_root=$(sed -n '2p' "$marker")
+  [ -n "$plan_rel" ] || return 1
+
+  # worktree consistency: canonical-compare marker root vs current root.
+  if [ -n "$marker_root" ] && [ -d "$marker_root" ]; then
+    local marker_root_c
+    marker_root_c=$(cd "$marker_root" && pwd -P) || return 1
+    [ "$marker_root_c" = "$root" ] || return 1
+  else
+    return 1
+  fi
+
+  [ -f "$root/$plan_rel" ] || return 1
+  printf '%s' "$plan_rel"
+  return 0
+}
