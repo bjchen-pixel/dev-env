@@ -295,6 +295,27 @@ red-driven 推進新實作的:S3-1(lib 地基 + active plan)、S3-2(union/dedup/
 
 settings.json:`Stop` hook 已加掛(`timeout: 30`),`PreToolUse` 條目原封不動。**PlanCompletenessGate 未實作**(老師排除本片)。
 
+### Slice 4 — session-start 注入 (D5) ✅ 已實作並全綠
+
+> D5 `hooks/session-start-context.sh` SessionStart hook。讀 `.ai/harness/handoff/resume.md`(Slice 3 產出)+ `tasks/current.md`(若存在),純文字 stdout、`exit 0`。
+> 零 LLM、零網路:內容只來自讀檔。**靈魂**:輸出明標 **recovery context only** + 當前輸入優先 disclaimer,框住任何注入的舊狀態。
+
+#### Slice 4 測試表(逐條 red-driven vs witness,已全綠)
+
+| # | test 名稱 | 驗證行為 | red-driven / witness |
+|---|---|---|---|
+| S4-1 | `test_session_start_resume_content_wrapped_in_disclaimer` | resume.md 內容出現在 stdout,且 disclaimer 在前框住 | **red-driven**(hook 誕生 127→0 + disclaimer 地基) |
+| S4-2 | `test_session_start_includes_current_task_when_present` | `tasks/current.md` 存在 → 內容也被注入 | **red-driven**(current-task 分支) |
+| S4-3 | `test_session_start_no_resume_degrades_gracefully` | resume.md 不存在 → exit 0、stderr 空 | witness(mutation-checked) |
+| S4-4 | `test_session_start_no_files_at_all_exits_0` | 全無檔(連 .ai 樹都無)→ exit 0、stderr 空 | witness(mutation-checked) |
+| S4-5 | `test_session_start_disclaimer_present_when_only_current_task` | 只有 current.md(無 resume)→ disclaimer 仍在前框住 | **red-driven**(disclaimer 提出 resume-only 分支) |
+| S4-6 | `test_session_start_disclaimer_soul_substrings_locked` | 靈魂鎖:disclaimer 全部承重子串實際出現 | witness(mutation-checked) |
+| S4-7 | `test_settings_wires_session_start_and_preserves_pretooluse_stop` | settings.json 掛 SessionStart 且 PreToolUse/Stop 不動 | **red-driven**(settings wiring) |
+
+red-driven 推進新實作的:S4-1(hook 地基 + disclaimer)、S4-2(current.md 分支)、S4-5(disclaimer 提出 resume-only 分支,框住任何注入狀態)、S4-7(settings wiring)。S4-3/S4-4/S4-6 為 graceful-degradation / 靈魂鎖 witness,均經 mutation 查核(故意改壞 → 轉紅、還原 → 轉綠),非偽造 red。
+
+settings.json:`SessionStart` hook 已加掛(`timeout: 30`),`PreToolUse` / `Stop` 條目原封不動。靜態檢查:hook 內無 `exit 1`/`exit 2`(唯一 exit 為 `exit 0`)、無 `curl`/`wget`/`anthropic`/`http`、無 bash 3.2 禁構式。
+
 ### Q8. 回滾(一鍵停用)
 
 掛上 hook 後若行為異常,三層停用手段(由輕到重):
