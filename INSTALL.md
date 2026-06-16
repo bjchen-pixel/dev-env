@@ -160,4 +160,53 @@ the section below — it warns (never blocks) on `signals/*.py`, silently allows
 `*.md`, and correctly relativizes absolute paths (in-repo vs out-of-repo)
 **without writing a single byte into that repo**.
 
-<!-- INVESTSYS-VERIFICATION -->
+---
+
+## 6. Real, non-invasive `advice` dry-run against InvestSys (recorded evidence)
+
+Run against the real `/Volumes/Data 4T/Projects/0-InvestSys` repo with synthetic
+stdin only. Nothing was written into InvestSys: no hook installed, no `.ai/`
+created, `.claude/` untouched, and `git status --porcelain` was byte-identical
+before and after.
+
+```sh
+REPO=/Volumes/Data\ 4T/Projects/dev-env-v3
+INV=/Volumes/Data\ 4T/Projects/0-InvestSys
+GUARD="$REPO/hooks/pre-edit-guard.sh"
+```
+
+| # | Edit target | Mode | Result |
+|---|---|---|---|
+| 1 | `signals/_common.py` (implementation) | `advice` | exit 0, **stdout** warning, never blocked |
+| 2 | `docs/BACKLOG.md` (workflow surface) | `advice` | exit 0, silent allow |
+| 3a | `/tmp/somewhere_else.py` (outside repo) | `advice` | exit 0, silent allow (out of scope) |
+| 3b | `NEXT_STEPS.md` (repo-root `*.md`) | `advice` | exit 0, silent allow |
+| 4 | `detectors/__init__.py` (implementation) | `enforce` | exit 2, stderr block — relativization correct |
+| 5 | `scanners/__init__.py` (implementation) | `off` | exit 0, silent allow |
+
+Scenario 1 (advice warns, never blocks an InvestSys impl edit):
+
+```
+$ printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s"}}' \
+    "$INV" "$INV/signals/_common.py" \
+    | ( cd "$INV" && V3_EDIT_PLAN_GATE=advice bash "$GUARD" )
+[PlanStatusGuard] advice: active plan not approved (status: (no marker)) for signals/_common.py. Not blocking (advice mode).
+exit=0   (stderr empty)
+```
+
+Scenario 4 (enforce would block — same path machinery, repo-relative target):
+
+```
+[PlanStatusGuard] BLOCKED (automated quality gate, exit 2 — this is NOT a user rejection).
+...
+  - blocked edit target: detectors/__init__.py
+exit=2   (stdout empty)
+```
+
+Non-invasion proof:
+
+```
+$ git -C "$INV" status --porcelain   # before == after, byte-identical
+$ ls "$INV/.ai"                       # No such file or directory (never created)
+```
+
