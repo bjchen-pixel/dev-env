@@ -105,6 +105,58 @@ contract_allows_path() {
   return 1
 }
 
+# policy_get <json_path> <default>
+#   Reads a setting from <repo root>/.ai/harness/policy.json.
+#   <json_path> is a dotted key path, e.g. "guards.edit_plan_gate". jq primary.
+#   Prints the value on stdout. File missing / key missing -> prints <default>.
+#   $3 (optional) = repo root (defaults to `pwd -P`).
+policy_get() {
+  local json_path="$1" default="$2" root="${3:-$(pwd -P)}"
+  local policy="$root/.ai/harness/policy.json"
+  [ -f "$policy" ] || { printf '%s' "$default"; return 0; }
+
+  local val=""
+  if command -v jq >/dev/null 2>&1; then
+    val=$(jq -r --arg p "$json_path" 'getpath($p | split(".")) // empty' "$policy" 2>/dev/null)
+  fi
+  if [ -z "$val" ]; then
+    # awk fallback (narrow target: flat two-level "section.key"). NOT a general
+    # JSON parser — only resolves the exact dotted path against a pretty-printed
+    # {"section": { "key": "val" }} shape, which is all policy.json needs.
+    # Scans tokens left-to-right: a `"name": {` opens a section (tracked as the
+    # current section); a `"name": "value"` is a leaf — emitted when its
+    # (section, name) matches the requested path. `}` closes the section.
+    local section leaf
+    case "$json_path" in
+      *.*) section="${json_path%%.*}"; leaf="${json_path#*.}" ;;
+      *)   section=""; leaf="$json_path" ;;
+    esac
+    val=$(awk -v want_sec="$section" -v want_leaf="$leaf" '
+      {
+        line = $0
+        while (match(line, /"[^"]*"[ \t]*:/)) {
+          key = substr(line, RSTART + 1); sub(/".*$/, "", key)
+          rest = substr(line, RSTART + RLENGTH)
+          if (match(rest, /^[ \t]*"/)) {              # string value (leaf)
+            v = substr(rest, RSTART + RLENGTH); sub(/".*$/, "", v)
+            if (key == want_leaf && cur_sec == want_sec) { print v; exit }
+            line = rest
+          } else if (match(rest, /^[ \t]*\{/)) {       # object value (section)
+            cur_sec = key
+            line = substr(rest, RSTART + RLENGTH)
+          } else {
+            line = rest
+          }
+        }
+        if (line ~ /\}/) cur_sec = ""                  # section closed
+      }
+    ' "$policy")
+  fi
+  [ -n "$val" ] || val="$default"
+  printf '%s' "$val"
+  return 0
+}
+
 # get_plan_status <plan_file>
 #   Prints the first **Status**: field value (trimmed) on stdout, returns 0.
 #   Returns 1 (no stdout) if file missing or no Status field found.

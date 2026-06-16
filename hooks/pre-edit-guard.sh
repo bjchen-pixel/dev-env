@@ -86,7 +86,12 @@ case "$REL" in
 esac
 
 # --- gate mode ---------------------------------------------------------------
-MODE="${V3_EDIT_PLAN_GATE:-advice}"
+# precedence: env V3_EDIT_PLAN_GATE > policy.json guards.edit_plan_gate > advice.
+if [ -n "${V3_EDIT_PLAN_GATE:-}" ]; then
+  MODE="$V3_EDIT_PLAN_GATE"
+else
+  MODE=$(policy_get "guards.edit_plan_gate" "advice" "$ROOT")
+fi
 [ "$MODE" = "off" ] && exit 0   # off -> silent allow.
 
 # --- PlanStatusGuard ---------------------------------------------------------

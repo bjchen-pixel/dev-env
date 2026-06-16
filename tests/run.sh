@@ -1032,9 +1032,194 @@ test_settings_wires_session_start_and_preserves_pretooluse_stop() {
   assert_contains "$content" "stop-orchestrator.sh" "stop-orchestrator wiring preserved"
 }
 
+# --- Slice 5 helpers: policy_get ---------------------------------------------
+
+# write_policy <dir> <edit_plan_gate_value>
+#   Writes .ai/harness/policy.json with guards.edit_plan_gate set to the value.
+write_policy() {
+  local dir="$1" val="$2"
+  mkdir -p "$dir/.ai/harness"
+  cat > "$dir/.ai/harness/policy.json" <<EOF
+{
+  "guards": {
+    "edit_plan_gate": "$val"
+  }
+}
+EOF
+}
+
+# --- Slice 5 D1 tests: policy_get --------------------------------------------
+
+test_policy_get_jq_reads_existing_key() {
+  # policy.json has guards.edit_plan_gate = "enforce". policy_get must return
+  # that value (jq primary path), NOT the default.
+  local dir val
+  dir=$(make_fixture_repo)
+  write_policy "$dir" "enforce"
+  val=$( cd "$dir" && . "$REPO/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "advice" )
+  assert_eq "enforce" "$val" "policy_get returns the stored value via jq"
+  rm -rf "$dir"
+}
+
+test_policy_get_jq_missing_key_returns_default() {
+  # policy.json exists but does NOT contain the requested key path -> default.
+  local dir val
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/.ai/harness"
+  printf '{"guards":{"other_gate":"enforce"}}\n' > "$dir/.ai/harness/policy.json"
+  val=$( cd "$dir" && . "$REPO/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "advice" )
+  assert_eq "advice" "$val" "missing key path -> default"
+  rm -rf "$dir"
+}
+
+test_policy_get_no_file_returns_default() {
+  # No policy.json at all -> default (fail-soft, must not crash).
+  local dir val
+  dir=$(make_fixture_repo)
+  # deliberately do NOT create .ai/harness/policy.json
+  val=$( cd "$dir" && . "$REPO/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "advice" )
+  assert_eq "advice" "$val" "no policy.json -> default"
+  rm -rf "$dir"
+}
+
+test_policy_get_awk_fallback_matches_jq() {
+  # PARITY: with jq MASKED (PATH stripped of jq), the awk fallback must extract
+  # the SAME value as the jq path for the flat two-level target
+  # guards.edit_plan_gate. Run both ways and assert equal AND assert the masked
+  # PATH truly cannot resolve jq (so the fallback is genuinely exercised).
+  local dir
+  dir=$(make_fixture_repo)
+  write_policy "$dir" "enforce"
+
+  # jq path value
+  local jq_val
+  jq_val=$( cd "$dir" && . "$REPO/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "advice" )
+
+  # build a tmp bin WITHOUT jq, containing only the tools the lib needs.
+  local jqbin t p
+  jqbin=$(mktemp -d)
+  for t in bash sh cat awk sed grep printf pwd dirname basename env mktemp rm; do
+    p=$(command -v "$t" 2>/dev/null)
+    [ -n "$p" ] && ln -sf "$p" "$jqbin/$t"
+  done
+  # sanity: jq MUST NOT be resolvable under the masked PATH.
+  if PATH="$jqbin" command -v jq >/dev/null 2>&1; then
+    fail "jq mask ineffective: jq still resolvable under masked PATH"
+  fi
+
+  local awk_val
+  awk_val=$( cd "$dir" && PATH="$jqbin" bash -c '. "'"$REPO"'/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "advice"' )
+
+  assert_eq "enforce" "$jq_val" "jq path reads enforce"
+  assert_eq "$jq_val" "$awk_val" "awk fallback value == jq value (parity)"
+  rm -rf "$dir" "$jqbin"
+}
+
+test_policy_get_awk_fallback_respects_section() {
+  # PARITY + DISCRIMINATION: a same-named leaf key under a DIFFERENT section must
+  # not be returned for guards.edit_plan_gate. Here `other.edit_plan_gate` = off
+  # appears first; the awk fallback must skip it and return guards.edit_plan_gate
+  # = enforce — same as jq. Kills a section-agnostic mutant.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/.ai/harness"
+  cat > "$dir/.ai/harness/policy.json" <<'EOF'
+{
+  "other": {
+    "edit_plan_gate": "off"
+  },
+  "guards": {
+    "edit_plan_gate": "enforce"
+  }
+}
+EOF
+  local jq_val
+  jq_val=$( cd "$dir" && . "$REPO/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "advice" )
+  local jqbin t p
+  jqbin=$(mktemp -d)
+  for t in bash sh cat awk sed grep printf pwd dirname basename env mktemp rm; do
+    p=$(command -v "$t" 2>/dev/null)
+    [ -n "$p" ] && ln -sf "$p" "$jqbin/$t"
+  done
+  if PATH="$jqbin" command -v jq >/dev/null 2>&1; then
+    fail "jq mask ineffective: jq still resolvable under masked PATH"
+  fi
+  local awk_val
+  awk_val=$( cd "$dir" && PATH="$jqbin" bash -c '. "'"$REPO"'/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "advice"' )
+  assert_eq "enforce" "$jq_val" "jq reads guards.edit_plan_gate (not other.)"
+  assert_eq "enforce" "$awk_val" "awk fallback respects section (not other.edit_plan_gate)"
+  rm -rf "$dir" "$jqbin"
+}
+
+# run_guard_no_env <dir> <abs_file_path>  -> sets RC / OUT / ERR globals.
+#   Like run_guard but DOES NOT set V3_EDIT_PLAN_GATE, so the guard must resolve
+#   its mode from policy.json (or the built-in advice default). Any inherited
+#   V3_EDIT_PLAN_GATE is explicitly unset to isolate the policy path.
+run_guard_no_env() {
+  local dir="$1" fp="$2"
+  local cwd out_f err_f
+  cwd=$(cd "$dir" && pwd -P)
+  out_f=$(mktemp); err_f=$(mktemp)
+  make_stdin "$fp" "$cwd" \
+    | ( cd "$dir" && unset V3_EDIT_PLAN_GATE && bash "$GUARD" ) >"$out_f" 2>"$err_f"
+  RC=$?; OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+# --- Slice 5 mode-precedence tests (env > policy > advice default) ------------
+
+test_mode_precedence_env_unset_policy_enforce_blocks() {
+  # env V3_EDIT_PLAN_GATE UNSET; policy.json guards.edit_plan_gate = enforce.
+  # No active plan + edit impl -> the guard must adopt enforce FROM POLICY and
+  # block: exit 2 + stderr.
+  local dir
+  dir=$(make_fixture_repo)
+  write_policy "$dir" "enforce"
+  # no marker => unapproved
+  run_guard_no_env "$dir" "$dir/signals/x.py"
+  assert_eq 2 "$RC" "exit code (policy enforce blocks)"
+  assert_contains "$ERR" "PlanStatusGuard" "stderr has guard name (policy-driven enforce)"
+  rm -rf "$dir"
+}
+
+test_mode_precedence_env_unset_no_policy_defaults_advice() {
+  # env UNSET and NO policy.json -> built-in default `advice`: no active plan +
+  # edit impl -> exit 0 with a stdout advice warning, stderr empty.
+  local dir
+  dir=$(make_fixture_repo)
+  # no policy.json, no marker
+  run_guard_no_env "$dir" "$dir/signals/x.py"
+  assert_eq 0 "$RC" "exit code (default advice does not block)"
+  assert_contains "$OUT" "PlanStatusGuard" "stdout carries advice warning"
+  assert_eq "" "$ERR" "stderr empty under default advice"
+  rm -rf "$dir"
+}
+
+test_mode_precedence_env_wins_over_policy() {
+  # REGRESSION GUARD for the 47 existing tests' assumption: when env
+  # V3_EDIT_PLAN_GATE is SET, it overrides policy.json. policy says enforce, but
+  # env says off -> must allow silently (env wins).
+  local dir
+  dir=$(make_fixture_repo)
+  write_policy "$dir" "enforce"
+  # env off must win over policy enforce -> silent allow.
+  run_guard "$dir" off "$dir/signals/x.py"
+  assert_eq 0 "$RC" "exit code (env off wins over policy enforce)"
+  assert_eq "" "$OUT" "stdout empty (off)"
+  assert_eq "" "$ERR" "stderr empty (off)"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
+test_policy_get_jq_reads_existing_key
+test_policy_get_jq_missing_key_returns_default
+test_policy_get_no_file_returns_default
+test_policy_get_awk_fallback_matches_jq
+test_policy_get_awk_fallback_respects_section
+test_mode_precedence_env_unset_policy_enforce_blocks
+test_mode_precedence_env_unset_no_policy_defaults_advice
+test_mode_precedence_env_wins_over_policy
 test_handoff_writes_active_plan_and_status
 test_handoff_changed_files_union_dedup_sorted
 test_handoff_changed_files_truncated_past_80
