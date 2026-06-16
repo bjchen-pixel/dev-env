@@ -838,6 +838,35 @@ test_handoff_changed_block_reproducible_lock() {
   rm -rf "$dir"
 }
 
+# --- Slice 3 D4 tests: stop-orchestrator hook --------------------------------
+
+test_stop_hook_writes_resume_and_exits_0() {
+  # The Stop hook unconditionally refreshes resume.md (reason "session-stop")
+  # and exits 0 (a Stop hook must never block). Run it from inside a fixture
+  # repo; assert exit 0 and that resume.md exists with the session-stop reason.
+  local dir
+  dir=$(make_fixture_repo)
+  write_plan_status "$dir" Draft
+  set_marker "$dir" "plans/foo.md"
+  local out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  # Stop hooks receive a JSON stdin payload; feed a minimal one.
+  printf '{"hook_event_name":"Stop","session_id":"t"}' \
+    | ( cd "$dir" && bash "$STOP_HOOK" ) >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+  assert_eq 0 "$RC" "stop hook exits 0"
+  local rf content
+  rf=$(resume_path "$dir")
+  if [ ! -f "$rf" ]; then
+    fail "stop hook must generate resume.md"
+  fi
+  content=$(cat "$rf" 2>/dev/null)
+  assert_contains "$content" "session-stop" "stop hook writes reason session-stop"
+  assert_contains "$content" "plans/foo.md" "stop hook handoff carries active plan"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -848,6 +877,7 @@ test_handoff_shortstat_line_from_git
 test_handoff_records_time_and_reason
 test_handoff_non_git_repo_degrades
 test_handoff_changed_block_reproducible_lock
+test_stop_hook_writes_resume_and_exits_0
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
