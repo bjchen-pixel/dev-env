@@ -956,6 +956,30 @@ test_session_start_includes_current_task_when_present() {
   rm -rf "$dir"
 }
 
+test_session_start_no_resume_degrades_gracefully() {
+  # WITNESS-candidate: when resume.md does NOT exist, the hook must still exit 0,
+  # not crash, and leak NO error text to stderr.
+  local dir
+  dir=$(make_fixture_repo)
+  # deliberately do NOT create resume.md
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0 even without resume.md"
+  assert_eq "" "$ERR" "no error leaked to stderr when resume.md absent"
+  rm -rf "$dir"
+}
+
+test_session_start_no_files_at_all_exits_0() {
+  # WITNESS-candidate: extreme case — neither resume.md nor tasks/current.md nor
+  # even the .ai/harness tree exists. Must still exit 0, stderr clean.
+  local dir
+  dir=$(mktemp -d)
+  # bare dir, no git, no .ai, no tasks
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0 with no files present"
+  assert_eq "" "$ERR" "no error leaked to stderr with no files present"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -1001,6 +1025,8 @@ test_marker_root_worktree_consistency_root_mismatch_degrades
 test_workflow_surface_md_and_docs_pass
 test_session_start_resume_content_wrapped_in_disclaimer
 test_session_start_includes_current_task_when_present
+test_session_start_no_resume_degrades_gracefully
+test_session_start_no_files_at_all_exits_0
 "
 
 for t in $TESTS; do
