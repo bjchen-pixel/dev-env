@@ -50,6 +50,10 @@ write_handoff() {
     total=0
   fi
 
+  # git diff --shortstat HEAD (one line, leading whitespace trimmed).
+  local shortstat
+  shortstat=$(git diff --shortstat HEAD 2>/dev/null | sed 's/^[ \t]*//')
+
   {
     printf '# Session handoff (recovery context)\n\n'
     printf '%s\n' "- generated: $now"
@@ -65,6 +69,12 @@ write_handoff() {
       if [ "$total" -gt 80 ]; then
         printf '\n%s\n' "... (truncated, $total total)"
       fi
+    fi
+    printf '\n## Diff stat\n\n'
+    if [ -n "$shortstat" ]; then
+      printf '%s\n' "$shortstat"
+    else
+      printf '%s\n' "(no changes)"
     fi
   } > "$out"
 

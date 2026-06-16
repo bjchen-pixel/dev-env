@@ -740,12 +740,37 @@ test_handoff_changed_files_truncated_past_80() {
   rm -rf "$dir"
 }
 
+test_handoff_shortstat_line_from_git() {
+  # The resume.md must carry the `git diff --shortstat HEAD` line, verbatim from
+  # git. Commit a file, then modify it; git reports "N file(s) changed, M
+  # insertions(+)...". Assert the resume.md contains the SAME shortstat text git
+  # produces independently (proves it's git-derived, not fabricated).
+  local dir
+  dir=$(make_fixture_repo)
+  printf 'a\nb\nc\n' > "$dir/signals/x.py"
+  ( cd "$dir" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m init )
+  printf 'a\nb\nc\nd\ne\n' > "$dir/signals/x.py"   # +2 lines
+  local expected_shortstat
+  expected_shortstat=$( cd "$dir" && git diff --shortstat HEAD | sed 's/^[ \t]*//' )
+  call_write_handoff "$dir" "session-stop"
+  assert_eq 0 "$RC" "write_handoff return code"
+  local content
+  content=$(cat "$(resume_path "$dir")")
+  # sanity: git actually produced a non-empty shortstat for this fixture.
+  if [ -z "$expected_shortstat" ]; then
+    fail "fixture produced empty shortstat (test setup bug)"
+  fi
+  assert_contains "$content" "$expected_shortstat" "resume.md carries git's shortstat verbatim"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
 test_handoff_writes_active_plan_and_status
 test_handoff_changed_files_union_dedup_sorted
 test_handoff_changed_files_truncated_past_80
+test_handoff_shortstat_line_from_git
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
