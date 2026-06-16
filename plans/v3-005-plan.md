@@ -272,12 +272,35 @@ allowed_paths:
 
 red-driven 推進新實作的:S2-1(函式地基)、S2-3(glob 分支 + 修參數展開 bug)、S2-8(接進 guard 鏈)。其餘為 mutation-grade 區辨/邊界/決策表 witness,誠實標記,未偽造 red。
 
+### Slice 3 — write-handoff (D3) + stop-orchestrator (D4 主體) ✅ 已實作並全綠
+
+> D3 `hooks/lib/write-handoff.sh` 的 `write_handoff(reason)` + D4 `hooks/stop-orchestrator.sh` Stop hook + settings.json 掛 Stop。
+> 零 LLM、零網路:交接內容全由 `git` + 檔案狀態算出。**不實作** PlanCompletenessGate(留最後一片)。
+
+#### Slice 3 測試表(逐條 red-driven vs witness,已全綠)
+
+| # | test 名稱 | 驗證行為 | red-driven / witness |
+|---|---|---|---|
+| S3-1 | `test_handoff_writes_active_plan_and_status` | resume.md 記 active plan 路徑 + 狀態 | **red-driven**(lib 誕生,127→0) |
+| S3-2 | `test_handoff_changed_files_union_dedup_sorted` | changed = tracked-modified ∪ untracked,去重+排序 | **red-driven**(changed-files 區塊地基) |
+| S3-3 | `test_handoff_changed_files_truncated_past_80` | >80 → 截斷至 80 + 總數標記 | **red-driven**(截斷邏輯) |
+| S3-4 | `test_handoff_shortstat_line_from_git` | `git diff --shortstat HEAD` 逐字寫入 | **red-driven**(shortstat 行) |
+| S3-5 | `test_handoff_records_time_and_reason` | UTC ISO8601 時間 + reason 存在 | witness(S3-1 已實作) |
+| S3-6 | `test_handoff_non_git_repo_degrades` | 非 git → 只時間+reason、無 git 錯誤外漏、無 changed/diff 區塊 | **red-driven**(降級分支) |
+| S3-7 | `test_handoff_changed_block_reproducible_lock` | changed 區塊逐行 == 獨立算出的 git union 集合(可複現鎖) | witness(反模型生成痕跡鎖) |
+| S3-8 | `test_stop_hook_writes_resume_and_exits_0` | Stop hook 刷新 resume.md + `exit 0` | **red-driven**(hook 誕生,127→0) |
+| S3-9 | `test_handoff_idempotent_overwrite` | 兩次呼叫覆寫(單一 header、最新 reason) | witness(`> "$out"` 覆寫) |
+
+red-driven 推進新實作的:S3-1(lib 地基 + active plan)、S3-2(union/dedup/sort)、S3-3(截斷)、S3-4(shortstat)、S3-6(非-git 降級)、S3-8(stop hook 接 wiring)。S3-5/S3-7/S3-9 為 witness/可複現鎖,誠實標記,未偽造 red。
+
+settings.json:`Stop` hook 已加掛(`timeout: 30`),`PreToolUse` 條目原封不動。**PlanCompletenessGate 未實作**(老師排除本片)。
+
 ### Q8. 回滾(一鍵停用)
 
 掛上 hook 後若行為異常,三層停用手段(由輕到重):
 1. **降模式**:`export V3_EDIT_PLAN_GATE=off`(或 `advice`)——立即讓 PlanStatusGuard 不再擋,不動任何檔。最輕、最快。
 2. **官方總開關**:`.claude/settings.json` 設 `"disableAllHooks": true`(官方 hooks 文件提供),一鍵停掉該 repo 全部 hook。
-3. **拔區塊**:刪除/註解 `.claude/settings.json` 裡 `hooks.PreToolUse` 的對應條目,或整檔還原(repo 內、進 git,`git checkout .claude/settings.json` 即復原)。
+3. **拔區塊**:刪除/註解 `.claude/settings.json` 裡 `hooks.PreToolUse` / `hooks.Stop` 的對應條目,或整檔還原(repo 內、進 git,`git checkout .claude/settings.json` 即復原)。
 
 `INSTALL.md`(S5 交付)會把這三層寫成清楚步驟。因 hook 全掛**專案級** settings、未動 user-level,最壞情況刪掉 repo 內 `.claude/settings.json` 即完全脫鉤,不影響其他專案。
 
