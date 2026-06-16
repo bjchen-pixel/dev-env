@@ -36,6 +36,52 @@ get_active_plan() {
   return 0
 }
 
+# contract_allows_path <contract_file> <file_path_rel>
+#   Parses the FIRST ```yaml ... ``` block of contract_file, extracts the list
+#   items under `allowed_paths:` (lines of the form `  - xxx`), strips inline
+#   `#` comments and surrounding whitespace. Match rule:
+#     - item ends with `/` => prefix match  (case "$rel" in "$item"*)
+#     - otherwise          => glob match    (case "$rel" in $item)
+#   Returns 0 if any item matches, 1 otherwise.
+contract_allows_path() {
+  local contract_file="$1" rel="$2"
+  [ -f "$contract_file" ] || return 1
+
+  local items
+  items=$(awk '
+    /^```yaml[ \t]*$/ { if (!seen) { inblock=1; seen=1; next } }
+    inblock && /^```/ { inblock=0 }
+    inblock && inlist {
+      if ($0 ~ /^[ \t]+-[ \t]*/) { print; next }
+      else { inlist=0 }
+    }
+    inblock && /^allowed_paths:[ \t]*$/ { inlist=1 }
+  ' "$contract_file")
+
+  local line item
+  IFS='
+'
+  for line in $items; do
+    # strip leading "  - ", inline "# ..." comment, surrounding whitespace.
+    item=$line
+    item=${item#*-}
+    item=${item%%#*}
+    # trim leading/trailing whitespace (bash 3.2 safe)
+    item="$(printf '%s' "$item" | sed 's/^[ \t]*//; s/[ \t]*$//')"
+    [ -n "$item" ] || continue
+    case "$item" in
+      */)
+        case "$rel" in "$item"*) unset IFS; return 0 ;; esac
+        ;;
+      *)
+        case "$rel" in $item) unset IFS; return 0 ;; esac
+        ;;
+    esac
+  done
+  unset IFS
+  return 1
+}
+
 # get_plan_status <plan_file>
 #   Prints the first **Status**: field value (trimmed) on stdout, returns 0.
 #   Returns 1 (no stdout) if file missing or no Status field found.

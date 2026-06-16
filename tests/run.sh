@@ -98,6 +98,50 @@ run_guard() {
   rm -f "$out_f" "$err_f"
 }
 
+# --- Slice 2 fixture helpers -------------------------------------------------
+
+# write_investsys_contract <plan_md_path>
+#   Writes a plan markdown file embedding the Q7 InvestSys yaml contract block.
+#   This is the real allowed_paths sample from the v3-005 plan Q7.
+write_investsys_contract() {
+  local f="$1"
+  cat > "$f" <<'EOF'
+# InvestSys active plan
+
+**Status**: Approved
+
+Some prose describing the slice.
+
+```yaml
+allowed_paths:
+  - signals/        # prefix match (trailing /): all of signals/
+  - detectors/
+  - scanners/
+  - notifiers/
+  - analysis/
+  - utils/
+  - tests/test_*.py # glob match (no trailing /): test files
+  - config/*.yaml
+```
+
+More prose after the block.
+EOF
+}
+
+# --- Slice 2 D1 unit tests: contract_allows_path -----------------------------
+
+test_contract_allows_path_prefix_hit() {
+  # allowed_paths has `signals/` (trailing-slash => prefix match).
+  # `signals/vix.py` is under that prefix => return 0.
+  local dir contract
+  dir=$(mktemp -d)
+  contract="$dir/plan.md"
+  write_investsys_contract "$contract"
+  ( . "$REPO/hooks/lib/workflow-state.sh"; contract_allows_path "$contract" "signals/vix.py" )
+  assert_eq 0 "$?" "signals/vix.py allowed by signals/ prefix"
+  rm -rf "$dir"
+}
+
 # --- tests -------------------------------------------------------------------
 
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr() {
@@ -341,6 +385,7 @@ test_workflow_surface_md_and_docs_pass() {
 # --- driver ------------------------------------------------------------------
 
 TESTS="
+test_contract_allows_path_prefix_hit
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
