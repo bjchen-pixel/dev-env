@@ -327,6 +327,49 @@ settings.json:`SessionStart` hook 已加掛(`timeout: 30`),`PreToolUse` / `Stop`
 
 ---
 
+### Slice 5 — policy.json + INSTALL + InvestSys 落地 (D1 policy_get + D6) ✅ 已實作並全綠
+
+> D1 `policy_get(json_path, default)`(jq 主路徑 + 窄目標 awk fallback;檔/key 不存在回 default)+ mode 來源接成 `env > policy > advice` 精確 precedence + D6 `templates/policy.json` 範本 + `INSTALL.md` + InvestSys 非侵入唯讀驗證。
+> 零 LLM、零網路。47 條既有 test(全部顯式設 `V3_EDIT_PLAN_GATE`)因 env 優先而**完全未受影響**。
+
+#### Slice 5 測試表(逐條 red-driven vs witness,已全綠)
+
+| # | test 名稱 | 驗證行為 | red-driven / witness |
+|---|---|---|---|
+| S5-1 | `test_policy_get_jq_reads_existing_key` | jq 讀到 key → 回值 | **red-driven**(policy_get 誕生,127→0) |
+| S5-2 | `test_policy_get_jq_missing_key_returns_default` | key 不存在 → 回 default | witness(mutation-checked:拔 default fallback → 紅) |
+| S5-3 | `test_policy_get_no_file_returns_default` | 檔不存在 → 回 default(fail-soft) | witness(mutation-checked:拔 missing-file 分支 → 紅) |
+| S5-4 | `test_policy_get_awk_fallback_matches_jq` | jq 屏蔽(fresh-shell 證實不可解析)→ awk fallback 與 jq **同值** | **red-driven**(awk fallback 誕生,jq-only 回 advice→紅) |
+| S5-5 | `test_policy_get_awk_fallback_respects_section` | awk fallback 區辨 section,不取錯 section 同名 leaf | witness(mutation-checked:拔 section guard → 取到 off) |
+| S5-6 | `test_mode_precedence_env_unset_policy_enforce_blocks` | env 未設 + policy=enforce → 走 enforce(exit 2) | **red-driven**(mode 來源接 policy,env-only 回 advice→紅) |
+| S5-7 | `test_mode_precedence_env_unset_no_policy_defaults_advice` | env 未設 + 無 policy → advice 預設(exit 0 + stdout) | witness(mutation-checked:忽略 policy → 紅) |
+| S5-8 | `test_mode_precedence_env_wins_over_policy` | env 設了壓過 policy(env=off 勝 policy=enforce)= **47 條既有 test 不受影響的回歸鎖** | witness(mutation-checked:忽略 env → 紅 + 帶崩既有 test) |
+| S5-9 | `test_policy_template_default_is_advice_and_readable_by_policy_get` | 範本 `guards.edit_plan_gate` 預設 advice,且能被 policy_get round-trip 讀出 | **red-driven**(範本檔誕生) |
+| S5-10 | `test_install_md_documents_switches_and_killswitch` | INSTALL.md 載 env/policy 雙開關 + 三態 + disableAllHooks 一鍵停用 | **red-driven**(INSTALL.md 誕生) |
+
+red-driven 推進新實作的:S5-1(policy_get 地基)、S5-4(awk fallback)、S5-6(mode 來源接 policy)、S5-9(範本檔)、S5-10(INSTALL.md)。其餘 witness 全經 mutation 查核(故意改壞→轉紅、還原→轉綠),未偽造 red。
+
+precedence 實際斷言:`env > policy > advice`。兩方向 mutation 雙鎖——忽略 env(policy 永遠勝)→ `env_wins_over_policy` 紅 + 多條既有 test 連帶轉紅(證明 47 條依賴 env 優先);忽略 policy(env 未設恆 advice)→ `env_unset_policy_enforce_blocks` 紅。
+
+awk fallback parity 實際手法:`jqbin=$(mktemp -d)` 只 symlink 非-jq 工具,sanity 用 **fresh `bash -c 'command -v jq'`**(避開 parent shell command-hash 快取假陽性,與 guard 真實解析方式一致)斷言 jq 不可解析,再斷言 `policy_get` 在屏蔽下回 `enforce`(== jq 路徑值)。同手法亦修補既有 `test_file_path_extracted_without_jq_matches_jq` 的 hash 脆弱探針。
+
+#### InvestSys 非侵入驗證(唯讀,合成 stdin,完全未寫入)
+
+對真實 `/Volumes/Data 4T/Projects/0-InvestSys` 餵合成 stdin payload(`cwd`/`file_path` 指真實路徑),只跑 guard、只觀察:
+- 改 `signals/_common.py`(實作)advice → exit 0,`[PlanStatusGuard] advice` 在 **stdout**,never block;相對化正確(印 `signals/_common.py`)。
+- 改 `docs/BACKLOG.md` / `NEXT_STEPS.md`(workflow surface)→ exit 0 靜默放行。
+- `/tmp/somewhere_else.py`(repo 外絕對路徑)→ exit 0 靜默(out-of-scope)。
+- 改 `detectors/__init__.py` enforce → exit 2 stderr,relativization 在 enforce 下亦正確。
+- 改 `scanners/__init__.py` off → exit 0 靜默。
+
+**完全未被寫入佐證**:`git -C <InvestSys> status --porcelain` 驗證前後**逐字節相同**(10 行 baseline 不變);InvestSys **無** `.ai/` 目錄被建;`.claude/` mtime 仍 Jun 14(本 session 前)。未 git add/commit 任何 InvestSys 內容。實測指令+輸出已記入 `INSTALL.md` 第 6 節。
+
+settings.json:本片**未改**(PreToolUse/Stop/SessionStart 三條原封不動;policy 經 lib 由 guard 內部讀取,無需新 wiring)。靜態檢查:hook 內可執行 exit 僅 `exit 0`/`exit 2`(`exit 1` 僅出現在註解),無 `curl`/`wget`/`anthropic`/`http`,無 bash 3.2 禁構式,5 個 hook 檔 `bash -n` 全過。
+
+**v3-005 全切片(Slice 1–5)完成。**
+
+---
+
 ## Slice 1 規格(PlanStatusGuard 三態端到端)
 
 ### 檔案清單與職責
