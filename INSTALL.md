@@ -210,3 +210,58 @@ $ git -C "$INV" status --porcelain   # before == after, byte-identical
 $ ls "$INV/.ai"                       # No such file or directory (never created)
 ```
 
+---
+
+## 7. v3-006 — Context-Usage Gauge（雙軌:終端機 statusLine + 面板 Context Bar）
+
+> **呈現面雙軌(dogfood 後定稿)**:statusLine 只渲染在**終端機 `claude` CLI**,
+> 打不到 VS Code 原生擴充的側邊面板。所以:
+> - **終端機** → 下方的 `context-gauge.sh` statusLine(本節)。
+> - **VS Code 面板** → 外部現成擴充 **Claude Context Bar**(`ezoosk.claude-context-bar`):
+>   讀同一份 `~/.claude/projects/` JSONL、本地算、MIT;預設 `warningThreshold 50%`
+>   = 200k 視窗的 100k,黃燈正好壓在同一條軟線上。從 VS Code Extensions 裝即可,
+>   回滾=移除該擴充。(取捨:源碼不可審、讀跨全專案 transcript——以 Marketplace 信任換便利。)
+> - **「hook 印進對話」路線查證後放棄**(無社群先例、面板渲染未知、恐 nagware)。
+> 詳見 `tickets/v3-006.md` §七。
+
+A passive statusLine gauge showing live context-window occupancy **in the
+terminal CLI**. Past an absolute **100k-token soft line** it switches to a calm
+"handoff zone" cue. 100k is a *soft* line (start looking for a clean break) —
+**not** a hard stop; the wording is deliberately non-imperative.
+
+Pure bash (3.2), `jq` primary + `awk` fallback, no LLM, no network. It reads the
+statusLine JSON on stdin; any bad/partial payload degrades to **silent empty
+output** (never breaks the status line, never false-alarms).
+
+### Install（唯一動 user-level 的一處)
+
+statusLine 是全域的,所以掛在 **user-level** `~/.claude/settings.json`(本專案唯一
+碰 repo 外的檔,出於明確選擇)。加一個 `statusLine` 鍵指向 repo script,保留你其他鍵:
+
+```json
+{
+  "effortLevel": "high",
+  "theme": "dark",
+  "model": "opus",
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"/Volumes/Data 4T/Projects/dev-env-v3/statusline/context-gauge.sh\""
+  }
+}
+```
+
+**重啟 Claude Code** 才會載入(statusLine 設定開機時讀,不熱載)。
+
+### 你會看到什麼
+
+- 100k 以下:`context <used> / <window>`(中性)。
+- 100k(含)以上:黃色 `進入換手區(<used> / <window>)。不急,告一段落再交接。`
+
+### 回滾(一鍵)
+
+刪掉 `~/.claude/settings.json` 的 `statusLine` 鍵,重啟即可。其他什麼都不受影響,
+每個專案的狀態列回到原狀。gauge script + 測試留在 repo、靜置不動。
+
+> script 在 dev-env-v3 內以絕對路徑被引用。若搬動 repo,更新 `command` 路徑
+> (否則 gauge 靜默不顯示——fail-soft)。
+
