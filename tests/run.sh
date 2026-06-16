@@ -1000,6 +1000,22 @@ test_session_start_disclaimer_present_when_only_current_task() {
   rm -rf "$dir"
 }
 
+test_session_start_disclaimer_soul_substrings_locked() {
+  # DEDICATED SOUL LOCK (binding spec #2): assert every load-bearing phrase of
+  # the disclaimer actually appears on stdout. This is the slice's soul; if any
+  # of these regress, the injected state could silently override the user's task.
+  local dir
+  dir=$(make_fixture_repo)
+  write_resume "$dir" "SOUL_RESUME"
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  assert_contains "$OUT" "recovery context only" "lock: 'recovery context only'"
+  assert_contains "$OUT" "real attachment, file path" "lock: names real attachment / file path"
+  assert_contains "$OUT" "give priority to the user" "lock: current input takes priority"
+  assert_contains "$OUT" "override the current task" "lock: must not override the current task"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -1048,6 +1064,7 @@ test_session_start_includes_current_task_when_present
 test_session_start_no_resume_degrades_gracefully
 test_session_start_no_files_at_all_exits_0
 test_session_start_disclaimer_present_when_only_current_task
+test_session_start_disclaimer_soul_substrings_locked
 "
 
 for t in $TESTS; do
