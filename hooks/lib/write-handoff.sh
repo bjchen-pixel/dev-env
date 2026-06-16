@@ -40,10 +40,15 @@ write_handoff() {
   fi
 
   # changed files: union of tracked-modified and untracked, dedup + sorted.
-  local changed
+  local changed total
   changed=$( { git diff --name-only HEAD 2>/dev/null
                git ls-files --others --exclude-standard 2>/dev/null
              } | sort -u )
+  if [ -n "$changed" ]; then
+    total=$(printf '%s\n' "$changed" | grep -c .)
+  else
+    total=0
+  fi
 
   {
     printf '# Session handoff (recovery context)\n\n'
@@ -54,9 +59,12 @@ write_handoff() {
     printf '%s\n' "- status: $status"
     printf '\n## Changed files\n\n'
     if [ -n "$changed" ]; then
-      printf '%s\n' "$changed" | while IFS= read -r f; do
+      printf '%s\n' "$changed" | head -80 | while IFS= read -r f; do
         [ -n "$f" ] && printf '%s\n' "- $f"
       done
+      if [ "$total" -gt 80 ]; then
+        printf '\n%s\n' "... (truncated, $total total)"
+      fi
     fi
   } > "$out"
 

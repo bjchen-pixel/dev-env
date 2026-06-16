@@ -705,11 +705,47 @@ test_handoff_changed_files_union_dedup_sorted() {
   rm -rf "$dir"
 }
 
+test_handoff_changed_files_truncated_past_80() {
+  # With > 80 changed files, the listing is truncated to 80 entries and a
+  # truncation marker carrying the TOTAL count is emitted. We create 90 untracked
+  # files; the block must list exactly 80 file entries and a "(truncated" marker
+  # naming 90 as the total.
+  local dir i
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/many"
+  i=0
+  while [ "$i" -lt 90 ]; do
+    printf 'x\n' > "$dir/many/f$(printf '%03d' "$i").txt"
+    i=$((i + 1))
+  done
+  # the true total is whatever the spec's union set is (fixture also leaves
+  # signals/x.py untracked) -> compute it independently so the marker assertion
+  # is reproducible, not a guessed constant.
+  local expected_total
+  expected_total=$(expected_changed_set "$dir" | grep -c .)
+  call_write_handoff "$dir" "session-stop"
+  assert_eq 0 "$RC" "write_handoff return code"
+  local rf block listed
+  rf=$(resume_path "$dir")
+  block=$(extract_changed_block "$rf")
+  # extract_changed_block keeps only "- " file lines; the truncation marker is
+  # NOT a "- " line, so count of file entries must be exactly 80.
+  listed=$(printf '%s\n' "$block" | grep -c .)
+  assert_eq 80 "$listed" "exactly 80 file entries listed (truncated)"
+  # truncation marker with the real total must be present in the file.
+  local content
+  content=$(cat "$rf")
+  assert_contains "$content" "truncated" "resume.md has a truncation marker"
+  assert_contains "$content" "$expected_total total" "truncation marker names the total count"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
 test_handoff_writes_active_plan_and_status
 test_handoff_changed_files_union_dedup_sorted
+test_handoff_changed_files_truncated_past_80
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
