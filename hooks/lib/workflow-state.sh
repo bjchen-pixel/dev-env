@@ -88,21 +88,20 @@ contract_allows_path() {
   local items
   items=$(_contract_items "$contract_file")
 
-  local item
-  IFS='
+  # split on newline only (scoped: never leak IFS to the caller).
+  local item IFS='
 '
   for item in $items; do
     [ -n "$item" ] || continue
     case "$item" in
       */)
-        case "$rel" in "$item"*) unset IFS; return 0 ;; esac
+        case "$rel" in "$item"*) return 0 ;; esac
         ;;
       *)
-        case "$rel" in $item) unset IFS; return 0 ;; esac
+        case "$rel" in $item) return 0 ;; esac
         ;;
     esac
   done
-  unset IFS
   return 1
 }
 
