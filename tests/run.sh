@@ -179,6 +179,48 @@ test_contract_allows_path_glob_hit_config() {
   rm -rf "$dir"
 }
 
+test_contract_allows_path_no_yaml_block_returns_1() {
+  # A plan with NO ```yaml allowed_paths block => contract not enabled =>
+  # contract_allows_path returns 1 (lib-level basis of the opt-in no-op).
+  local dir contract
+  dir=$(mktemp -d)
+  contract="$dir/plan.md"
+  printf '# plain plan\n\n**Status**: Approved\n\nNo yaml here.\n' > "$contract"
+  if ( . "$REPO/hooks/lib/workflow-state.sh"; contract_allows_path "$contract" "signals/vix.py" ); then
+    fail "no yaml block must return 1 (got 0)"
+  fi
+  rm -rf "$dir"
+}
+
+test_contract_allows_path_prefix_not_treated_as_glob() {
+  # Discriminator: `signals/` is a PREFIX item. A deep path under it must match.
+  # If a mutant treated it as a glob (case in signals/), `signals/sub/deep.py`
+  # would NOT match. This kills that mutant.
+  local dir contract
+  dir=$(mktemp -d)
+  contract="$dir/plan.md"
+  write_investsys_contract "$contract"
+  ( . "$REPO/hooks/lib/workflow-state.sh"; contract_allows_path "$contract" "signals/sub/deep.py" )
+  assert_eq 0 "$?" "deep path under signals/ matches via prefix rule"
+  rm -rf "$dir"
+}
+
+test_contract_allows_path_glob_not_treated_as_prefix() {
+  # Discriminator: `config/*.yaml` is a GLOB item (anchored at end by `.yaml`).
+  # `config/foo.yaml.bak` must NOT match (glob requires the path to end .yaml).
+  # If a mutant treated it as a prefix (case in "config/*.yaml"*), it would also
+  # fail differently; but the sharp signal is: a real glob anchors the tail, so a
+  # trailing-extra path is rejected. This kills "glob misused as prefix".
+  local dir contract
+  dir=$(mktemp -d)
+  contract="$dir/plan.md"
+  write_investsys_contract "$contract"
+  if ( . "$REPO/hooks/lib/workflow-state.sh"; contract_allows_path "$contract" "config/foo.yaml.bak" ); then
+    fail "config/foo.yaml.bak must NOT match config/*.yaml glob (tail not anchored)"
+  fi
+  rm -rf "$dir"
+}
+
 # --- tests -------------------------------------------------------------------
 
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr() {
@@ -426,6 +468,9 @@ test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
 test_contract_allows_path_glob_hit_config
+test_contract_allows_path_no_yaml_block_returns_1
+test_contract_allows_path_prefix_not_treated_as_glob
+test_contract_allows_path_glob_not_treated_as_prefix
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
