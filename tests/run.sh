@@ -764,6 +764,52 @@ test_handoff_shortstat_line_from_git() {
   rm -rf "$dir"
 }
 
+test_handoff_records_time_and_reason() {
+  # WITNESS: the generation time (UTC ISO8601) and the caller-supplied reason
+  # must both appear. Time format asserted structurally (YYYY-MM-DDThh:mm:ssZ).
+  local dir
+  dir=$(make_fixture_repo)
+  call_write_handoff "$dir" "my-custom-reason"
+  assert_eq 0 "$RC" "write_handoff return code"
+  local content
+  content=$(cat "$(resume_path "$dir")")
+  assert_contains "$content" "my-custom-reason" "resume.md records the reason"
+  # ISO8601 UTC shape check via grep -E (structural, not a fixed timestamp).
+  if ! printf '%s\n' "$content" | grep -Eq 'generated: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'; then
+    fail "resume.md must carry a UTC ISO8601 generated timestamp"
+  fi
+  rm -rf "$dir"
+}
+
+test_handoff_non_git_repo_degrades() {
+  # In a NON-git directory, write_handoff must degrade: write ONLY time + reason,
+  # NOT call git in a way that leaks errors, and NOT emit git-derived sections.
+  # We run it in a plain mktemp dir (no git init) and capture stderr to prove no
+  # git error text leaks.
+  local dir
+  dir=$(mktemp -d)   # NOT a git repo
+  local err_f
+  err_f=$(mktemp)
+  ( cd "$dir" && . "$HANDOFF_LIB" && write_handoff "stop-no-git" ) 2>"$err_f"
+  RC=$?
+  local err content
+  err=$(cat "$err_f"); rm -f "$err_f"
+  assert_eq 0 "$RC" "write_handoff return code (non-git)"
+  content=$(cat "$(resume_path "$dir")" 2>/dev/null)
+  # time + reason present
+  assert_contains "$content" "stop-no-git" "non-git resume.md has the reason"
+  if ! printf '%s\n' "$content" | grep -Eq 'generated: [0-9]{4}-[0-9]{2}-[0-9]{2}T'; then
+    fail "non-git resume.md must still carry a timestamp"
+  fi
+  # NO git-derived sections (changed files / diff stat headers must be absent).
+  assert_not_contains "$content" "## Changed files" "non-git: no changed-files section"
+  assert_not_contains "$content" "## Diff stat" "non-git: no diff-stat section"
+  # NO git error text leaked to stderr.
+  assert_not_contains "$err" "not a git repository" "non-git: no git error leaked"
+  assert_not_contains "$err" "fatal:" "non-git: no fatal git error leaked"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -771,6 +817,8 @@ test_handoff_writes_active_plan_and_status
 test_handoff_changed_files_union_dedup_sorted
 test_handoff_changed_files_truncated_past_80
 test_handoff_shortstat_line_from_git
+test_handoff_records_time_and_reason
+test_handoff_non_git_repo_degrades
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests

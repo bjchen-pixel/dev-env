@@ -28,6 +28,22 @@ write_handoff() {
   local now
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+  # Detect git work tree. Non-git -> degrade to time + reason only.
+  local is_git=0
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    is_git=1
+  fi
+
+  if [ "$is_git" -ne 1 ]; then
+    {
+      printf '# Session handoff (recovery context)\n\n'
+      printf '%s\n' "- generated: $now"
+      printf '%s\n' "- reason: $reason"
+      printf '\n_(not a git repository — changed-files and diff-stat omitted)_\n'
+    } > "$out"
+    return 0
+  fi
+
   # active plan + status (git/file-derived; allow-list display, no model text).
   local plan status
   plan=$(get_active_plan "$root")
