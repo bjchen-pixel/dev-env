@@ -1016,6 +1016,22 @@ test_session_start_disclaimer_soul_substrings_locked() {
   rm -rf "$dir"
 }
 
+test_settings_wires_session_start_and_preserves_pretooluse_stop() {
+  # The project settings.json must register a SessionStart hook pointing at
+  # session-start-context.sh, WITHOUT disturbing the existing PreToolUse / Stop
+  # entries from earlier slices.
+  local settings content
+  settings="$REPO/.claude/settings.json"
+  content=$(cat "$settings" 2>/dev/null)
+  assert_contains "$content" "SessionStart" "settings registers SessionStart"
+  assert_contains "$content" "session-start-context.sh" "SessionStart points at the hook script"
+  # earlier slices must remain wired:
+  assert_contains "$content" "PreToolUse" "PreToolUse entry preserved"
+  assert_contains "$content" "pre-edit-guard.sh" "pre-edit-guard wiring preserved"
+  assert_contains "$content" "Stop" "Stop entry preserved"
+  assert_contains "$content" "stop-orchestrator.sh" "stop-orchestrator wiring preserved"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -1065,6 +1081,7 @@ test_session_start_no_resume_degrades_gracefully
 test_session_start_no_files_at_all_exits_0
 test_session_start_disclaimer_present_when_only_current_task
 test_session_start_disclaimer_soul_substrings_locked
+test_settings_wires_session_start_and_preserves_pretooluse_stop
 "
 
 for t in $TESTS; do
