@@ -221,9 +221,12 @@ test 在 `mktemp -d` 建臨時 repo,`git init`,結構:
 
 **TDD 紀律自我約束**:嚴禁同時生成實作與其測試;每條先寫 test、跑、親眼確認 red,才寫最小 green。若某 test 一寫就綠 → 停下回報(代表沒驗證到新行為)。
 
-### Q7. InvestSys 落地的 allowed_paths 範例(為 S2 預備,本片不實作)
+### Q7. InvestSys 落地的 allowed_paths 範例 ✅ Slice 2 已實作並實測通過
 
-> 本片(Slice 1)不含 ContractScopeGuard,但工單要 Q7 給真實 contract 片段。已核實 InvestSys 結構:實作在模組目錄,非 `src/`。
+> Slice 2 已實作 ContractScopeGuard + `contract_allows_path`。Q7 表已實測(clean bash subprocess):
+> `signals/vix.py` / `tests/test_vix.py` / `config/foo.yaml` → ALLOW(全 OK);
+> `deploy/secrets.env` / `portfolio.yaml` / `web/app.js` → BLOCK(全 OK)。6/6 命中預期。
+> 已核實 InvestSys 結構:實作在模組目錄,非 `src/`。
 
 InvestSys 真實頂層(節錄):`signals/ detectors/ scanners/ notifiers/ analysis/ utils/ tools/ scripts/ web/ tests/ config/ deploy/ docs/`。
 
@@ -243,7 +246,31 @@ allowed_paths:
 - 放行:`signals/vix.py`(命中 `signals/` 前綴)、`tests/test_vix.py`(命中 `tests/test_*.py` glob)、`config/foo.yaml`(命中 glob)。
 - 擋掉:`deploy/secrets.env`(`deploy/` 不在清單)、`portfolio.yaml`(repo 根、無目錄前綴、不命中任何項)、`web/app.js`(`web/` 不在清單)。
 
-`contract_allows_path` 規則(工單 D1):項目以 `/` 結尾 → 前綴比對;否則 → glob 比對(`case` + `[[ == pattern ]]`)。任一命中 return 0,否則 return 1。**此函式與表測屬 Slice 2,本片不寫。**
+`contract_allows_path` 規則(工單 D1):項目以 `/` 結尾 → 前綴比對(`case "$rel" in "$item"*`);否則 → glob 比對(`case "$rel" in $item`)。任一命中 return 0,否則 return 1。**Slice 2 已實作。**
+
+#### Slice 2 測試表(逐條 red-driven vs witness,已全綠)
+
+| # | test 名稱 | 驗證行為 | red-driven / witness |
+|---|---|---|---|
+| S2-1 | `test_contract_allows_path_prefix_hit` | `signals/` 前綴命中 `signals/vix.py` | **red-driven**(函式誕生,127→0) |
+| S2-2 | `test_contract_allows_path_prefix_miss` | `deploy/secrets.env` 不命中 → return 1 | witness |
+| S2-3 | `test_contract_allows_path_glob_hit_tests` | `tests/test_*.py` glob 命中 | **red-driven**(揪出參數展開吃字元 bug) |
+| S2-4 | `test_contract_allows_path_glob_hit_config` | `config/*.yaml` glob 命中 | witness |
+| S2-5 | `test_contract_allows_path_no_yaml_block_returns_1` | 無 yaml 區塊 → return 1(no-op 基礎) | witness |
+| S2-6 | `test_contract_allows_path_prefix_not_treated_as_glob` | `signals/` 深層 `signals/sub/deep.py` 命中(殺 prefix-as-glob mutant) | witness |
+| S2-7 | `test_contract_allows_path_glob_not_treated_as_prefix` | `config/foo.yaml.bak` 不命中(glob 尾錨定,殺 glob-as-prefix mutant) | witness |
+| S2-8 | `test_contractscope_enforce_out_of_scope_blocks_exit2_stderr` | enforce+Approved+範圍外 → exit 2 + `[ContractScopeGuard]` stderr | **red-driven**(guard 接進鏈) |
+| S2-9 | `test_contractscope_enforce_in_scope_prefix_passes_silent` | 範圍內(prefix)放行靜默 | witness |
+| S2-10 | `test_contractscope_enforce_in_scope_glob_passes_silent` | `tests/test_vix.py` 放行 | witness |
+| S2-11 | `test_contractscope_enforce_in_scope_config_glob_passes_silent` | `config/foo.yaml` 放行 | witness |
+| S2-12 | `test_contractscope_enforce_reporoot_file_blocks` | `portfolio.yaml`(repo 根)→ 擋 | witness |
+| S2-13 | `test_contractscope_enforce_web_dir_blocks` | `web/app.js` → 擋 | witness |
+| S2-14 | `test_contractscope_noop_approved_no_yaml_block_passes` | Approved 但無 yaml 區塊 → no-op 放行(opt-in 關) | witness |
+| S2-15 | `test_contractscope_advice_out_of_scope_warns_exit0` | advice → exit 0 + stdout 提醒 | witness |
+| S2-16 | `test_contractscope_off_out_of_scope_silent` | off → exit 0 靜默 | witness |
+| S2-17 | `test_chain_order_draft_out_of_scope_blocked_by_planstatus_not_contract` | Draft+範圍外 → `[PlanStatusGuard]` 先擋,**非** ContractScope(鏈序證明) | witness |
+
+red-driven 推進新實作的:S2-1(函式地基)、S2-3(glob 分支 + 修參數展開 bug)、S2-8(接進 guard 鏈)。其餘為 mutation-grade 區辨/邊界/決策表 witness,誠實標記,未偽造 red。
 
 ### Q8. 回滾(一鍵停用)
 
