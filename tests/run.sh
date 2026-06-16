@@ -537,7 +537,7 @@ test_file_path_extracted_without_jq_matches_jq() {
     | ( cd "$dir" && PATH="$jqbin" V3_EDIT_PLAN_GATE=enforce bash "$GUARD" ) >"$out2" 2>"$err2"
   rc2=$?
 
-  if PATH="$jqbin" command -v jq >/dev/null 2>&1; then
+  if PATH="$jqbin" bash -c 'command -v jq >/dev/null 2>&1'; then
     fail "jq mask ineffective: jq still resolvable under masked PATH"
   fi
   assert_eq "$rc1" "$rc2" "exit code parity (jq vs no-jq)"
@@ -1103,7 +1103,7 @@ test_policy_get_awk_fallback_matches_jq() {
     [ -n "$p" ] && ln -sf "$p" "$jqbin/$t"
   done
   # sanity: jq MUST NOT be resolvable under the masked PATH.
-  if PATH="$jqbin" command -v jq >/dev/null 2>&1; then
+  if PATH="$jqbin" bash -c 'command -v jq >/dev/null 2>&1'; then
     fail "jq mask ineffective: jq still resolvable under masked PATH"
   fi
 
@@ -1141,7 +1141,7 @@ EOF
     p=$(command -v "$t" 2>/dev/null)
     [ -n "$p" ] && ln -sf "$p" "$jqbin/$t"
   done
-  if PATH="$jqbin" command -v jq >/dev/null 2>&1; then
+  if PATH="$jqbin" bash -c 'command -v jq >/dev/null 2>&1'; then
     fail "jq mask ineffective: jq still resolvable under masked PATH"
   fi
   local awk_val
@@ -1209,6 +1209,52 @@ test_mode_precedence_env_wins_over_policy() {
   rm -rf "$dir"
 }
 
+# --- Slice 5 D6 tests: policy.json template + INSTALL.md ----------------------
+
+test_policy_template_default_is_advice_and_readable_by_policy_get() {
+  # The shipped policy.json template must default guards.edit_plan_gate to
+  # `advice` (the safest mode) AND be consumable by policy_get itself (round
+  # trip through the real reader, not just a string grep).
+  local tmpl
+  tmpl="$REPO/templates/policy.json"
+  if [ ! -f "$tmpl" ]; then
+    fail "policy.json template missing at templates/policy.json"
+    return
+  fi
+  # valid JSON (jq parse) when jq is present.
+  if command -v jq >/dev/null 2>&1; then
+    if ! jq -e . "$tmpl" >/dev/null 2>&1; then
+      fail "policy.json template is not valid JSON"
+    fi
+  fi
+  # round-trip through policy_get against a fixture repo seeded with the template.
+  local dir val
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/.ai/harness"
+  cp "$tmpl" "$dir/.ai/harness/policy.json"
+  val=$( cd "$dir" && . "$REPO/hooks/lib/workflow-state.sh"; policy_get "guards.edit_plan_gate" "SENTINEL" )
+  assert_eq "advice" "$val" "template default guards.edit_plan_gate == advice (via policy_get)"
+  rm -rf "$dir"
+}
+
+test_install_md_documents_switches_and_killswitch() {
+  # INSTALL.md must teach: the two switch surfaces (env + policy.json), the
+  # three modes, and at least one kill switch (disableAllHooks or off). These are
+  # load-bearing for the operator to roll out and roll back.
+  local f content
+  f="$REPO/INSTALL.md"
+  if [ ! -f "$f" ]; then
+    fail "INSTALL.md missing"
+    return
+  fi
+  content=$(cat "$f")
+  assert_contains "$content" "V3_EDIT_PLAN_GATE" "INSTALL documents the env switch"
+  assert_contains "$content" "policy.json" "INSTALL documents the policy.json switch"
+  assert_contains "$content" "enforce" "INSTALL documents enforce mode"
+  assert_contains "$content" "advice" "INSTALL documents advice mode"
+  assert_contains "$content" "disableAllHooks" "INSTALL documents the kill switch"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -1220,6 +1266,8 @@ test_policy_get_awk_fallback_respects_section
 test_mode_precedence_env_unset_policy_enforce_blocks
 test_mode_precedence_env_unset_no_policy_defaults_advice
 test_mode_precedence_env_wins_over_policy
+test_policy_template_default_is_advice_and_readable_by_policy_get
+test_install_md_documents_switches_and_killswitch
 test_handoff_writes_active_plan_and_status
 test_handoff_changed_files_union_dedup_sorted
 test_handoff_changed_files_truncated_past_80

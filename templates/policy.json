@@ -1,0 +1,6 @@
+{
+  "_comment": "v3-005 plan-gate policy. Copy this file to <repo>/.ai/harness/policy.json. Read by hooks/lib/workflow-state.sh policy_get(). guards.edit_plan_gate is a tri-state gate mode: 'advice' = warn on stdout but never block (safest, default); 'enforce' = block unapproved implementation edits with exit 2 (stderr); 'off' = silent, no guard at all. Precedence at runtime: env V3_EDIT_PLAN_GATE overrides this file, which overrides the built-in 'advice' default.",
+  "guards": {
+    "edit_plan_gate": "advice"
+  }
+}
