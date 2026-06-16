@@ -980,6 +980,26 @@ test_session_start_no_files_at_all_exits_0() {
   rm -rf "$dir"
 }
 
+test_session_start_disclaimer_present_when_only_current_task() {
+  # The disclaimer is the SOUL: any injected stale state must be framed by the
+  # recovery-context-only / current-input-priority disclaimer. Even when ONLY
+  # tasks/current.md exists (no resume.md), the disclaimer must still precede the
+  # injected task content so it never silently overrides the current task.
+  local dir
+  dir=$(make_fixture_repo)
+  # no resume.md; only current task
+  write_current_task "$dir" "ONLY_TASK_MARKER_77"
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  assert_contains "$OUT" "ONLY_TASK_MARKER_77" "task content injected"
+  assert_contains "$OUT" "recovery context only" "disclaimer present with only current task"
+  assert_contains "$OUT" "priority" "current-input-priority stated with only current task"
+  local pre
+  pre=${OUT%%ONLY_TASK_MARKER_77*}
+  assert_contains "$pre" "recovery context only" "disclaimer precedes the task content"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -1027,6 +1047,7 @@ test_session_start_resume_content_wrapped_in_disclaimer
 test_session_start_includes_current_task_when_present
 test_session_start_no_resume_degrades_gracefully
 test_session_start_no_files_at_all_exits_0
+test_session_start_disclaimer_present_when_only_current_task
 "
 
 for t in $TESTS; do

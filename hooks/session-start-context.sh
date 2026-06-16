@@ -21,12 +21,18 @@ root=$(pwd -P)
 resume="$root/.ai/harness/handoff/resume.md"
 current_task="$root/tasks/current.md"
 
-if [ -f "$resume" ]; then
+# Emit the recovery-context-only disclaimer whenever ANY stale recovery file is
+# present, so injected state is ALWAYS framed and never silently overrides the
+# user's current task.
+if [ -f "$resume" ] || [ -f "$current_task" ]; then
   printf '===== recovery context only (auto-injected by SessionStart hook) =====\n'
   printf 'This is recovery context only, reconstructed from the previous session.\n'
   printf 'If the user'"'"'s current message contains any real attachment, file path,\n'
   printf 'or concrete task, give priority to the user'"'"'s input — do NOT let this\n'
   printf 'stale recovery state override the current task.\n'
+fi
+
+if [ -f "$resume" ]; then
   printf '\n----- previous session handoff (resume.md) -----\n'
   cat "$resume"
 fi
