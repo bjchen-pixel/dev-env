@@ -885,6 +885,64 @@ test_handoff_idempotent_overwrite() {
   rm -rf "$dir"
 }
 
+# --- Slice 4 helpers: session-start-context --------------------------------
+
+SESSION_START_HOOK="$REPO/hooks/session-start-context.sh"
+
+# run_session_start <dir>  -> sets RC / OUT / ERR globals.
+#   Runs the SessionStart hook INSIDE <dir> with an empty SessionStart JSON on
+#   stdin (the hook reads files, not stdin content). Captures exit/stdout/stderr.
+run_session_start() {
+  local dir="$1"
+  local out_f err_f
+  out_f=$(mktemp)
+  err_f=$(mktemp)
+  printf '{"hook_event_name":"SessionStart","source":"startup"}' \
+    | ( cd "$dir" && bash "$SESSION_START_HOOK" ) >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f")
+  ERR=$(cat "$err_f")
+  rm -f "$out_f" "$err_f"
+}
+
+# write_resume <dir> <body>  -> writes .ai/harness/handoff/resume.md
+write_resume() {
+  local dir="$1" body="$2"
+  mkdir -p "$dir/.ai/harness/handoff"
+  printf '%s\n' "$body" > "$dir/.ai/harness/handoff/resume.md"
+}
+
+# write_current_task <dir> <body>  -> writes tasks/current.md
+write_current_task() {
+  local dir="$1" body="$2"
+  mkdir -p "$dir/tasks"
+  printf '%s\n' "$body" > "$dir/tasks/current.md"
+}
+
+# --- Slice 4 D5 tests: session-start-context.sh ------------------------------
+
+test_session_start_resume_content_wrapped_in_disclaimer() {
+  # SOUL of this slice. When resume.md exists, its content must appear on stdout
+  # AND be preceded by the recovery-context-only / current-input-priority
+  # disclaimer. exit 0.
+  local dir
+  dir=$(make_fixture_repo)
+  write_resume "$dir" "UNIQUE_RESUME_MARKER_42 active plan: plans/foo.md"
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  # disclaimer substrings (the soul):
+  assert_contains "$OUT" "recovery context only" "stdout carries recovery-context-only disclaimer"
+  assert_contains "$OUT" "user" "disclaimer mentions user input"
+  assert_contains "$OUT" "priority" "disclaimer states current input takes priority"
+  # resume content actually injected:
+  assert_contains "$OUT" "UNIQUE_RESUME_MARKER_42" "resume.md content appears on stdout"
+  # disclaimer comes BEFORE the resume content (wraps it):
+  local pre
+  pre=${OUT%%UNIQUE_RESUME_MARKER_42*}
+  assert_contains "$pre" "recovery context only" "disclaimer precedes the resume content"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -928,6 +986,7 @@ test_file_path_extracted_without_jq_matches_jq
 test_marker_root_worktree_consistency_symlink_match
 test_marker_root_worktree_consistency_root_mismatch_degrades
 test_workflow_surface_md_and_docs_pass
+test_session_start_resume_content_wrapped_in_disclaimer
 "
 
 for t in $TESTS; do
