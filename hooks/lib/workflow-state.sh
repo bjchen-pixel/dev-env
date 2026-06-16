@@ -36,6 +36,44 @@ get_active_plan() {
   return 0
 }
 
+# _contract_items <contract_file>
+#   Internal: emits the cleaned allowed_paths list items (one per line) from the
+#   FIRST ```yaml block. Empty output if no such block / no allowed_paths.
+_contract_items() {
+  local contract_file="$1"
+  [ -f "$contract_file" ] || return 0
+  awk '
+    /^```yaml[ \t]*$/ { if (!seen) { inblock=1; seen=1; next } }
+    inblock && /^```/ { inblock=0 }
+    inblock && inlist {
+      if ($0 ~ /^[ \t]*-[ \t]*/) {
+        sub(/^[ \t]*-[ \t]*/, "")
+        sub(/[ \t]*#.*$/, "")
+        sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "")
+        if (length($0) > 0) print
+        next
+      } else { inlist=0 }
+    }
+    inblock && /^allowed_paths:[ \t]*$/ { inlist=1 }
+  ' "$contract_file"
+}
+
+# plan_has_contract <contract_file>
+#   Returns 0 if the file has a ```yaml allowed_paths block with >=1 item.
+#   This is the opt-in switch for ContractScopeGuard.
+plan_has_contract() {
+  local items
+  items=$(_contract_items "$1")
+  [ -n "$items" ]
+}
+
+# contract_allowed_paths_list <contract_file>
+#   Prints the allowed_paths items, one per line, each indented "    - " for
+#   display in the guard's stderr message.
+contract_allowed_paths_list() {
+  _contract_items "$1" | sed 's/^/    - /'
+}
+
 # contract_allows_path <contract_file> <file_path_rel>
 #   Parses the FIRST ```yaml ... ``` block of contract_file, extracts the list
 #   items under `allowed_paths:` (lines of the form `  - xxx`), strips inline
@@ -47,23 +85,8 @@ contract_allows_path() {
   local contract_file="$1" rel="$2"
   [ -f "$contract_file" ] || return 1
 
-  # awk emits one cleaned item per line: drop the leading `  - ` list marker,
-  # strip inline `# ...` comments, trim surrounding whitespace.
   local items
-  items=$(awk '
-    /^```yaml[ \t]*$/ { if (!seen) { inblock=1; seen=1; next } }
-    inblock && /^```/ { inblock=0 }
-    inblock && inlist {
-      if ($0 ~ /^[ \t]*-[ \t]*/) {
-        sub(/^[ \t]*-[ \t]*/, "")   # drop list marker
-        sub(/[ \t]*#.*$/, "")       # drop inline comment
-        sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "")  # trim
-        if (length($0) > 0) print
-        next
-      } else { inlist=0 }
-    }
-    inblock && /^allowed_paths:[ \t]*$/ { inlist=1 }
-  ' "$contract_file")
+  items=$(_contract_items "$contract_file")
 
   local item
   IFS='

@@ -109,7 +109,40 @@ else
 fi
 
 if [ "$STATUS" = "Approved" ]; then
-  exit 0   # approved -> allow.
+  # --- ContractScopeGuard ----------------------------------------------------
+  # opt-in: only active when the active plan file embeds a ```yaml allowed_paths
+  # block. If it does and the target falls OUTSIDE the declared scope, block
+  # (per mode). If no such block -> no-op, allow (PlanStatusGuard already passed).
+  if [ -n "$PLAN" ] && plan_has_contract "$ROOT/$PLAN"; then
+    if ! contract_allows_path "$ROOT/$PLAN" "$REL"; then
+      ALLOWED=$(contract_allowed_paths_list "$ROOT/$PLAN")
+      if [ "$MODE" = "enforce" ]; then
+        cat >&2 <<EOF
+[ContractScopeGuard] BLOCKED (automated quality gate, exit 2 — this is NOT a user rejection).
+
+The active plan declares an allowed_paths contract; this edit target is OUTSIDE it.
+  - active plan: $PLAN
+  - declared allowed_paths:
+$ALLOWED
+  - blocked edit target: $REL
+
+This is a deterministic scope guard, not a human saying no. Do NOT stop and silently wait.
+Do NOT edit the allowed_paths yourself to widen scope; that's the orchestrator's step.
+To make progress, do ONE of these:
+  1. Edit a file that is INSIDE the declared allowed scope instead.
+  2. Or update allowed_paths in the plan ($PLAN — plans/ is a workflow surface and is
+     always editable), then report to the orchestrator for re-approval. Do NOT self-approve.
+  3. Or, if this gate is misfiring, the user can set V3_EDIT_PLAN_GATE=advice (warn-only) or =off.
+EOF
+        exit 2
+      fi
+      # advice mode: warn on stdout, allow.
+      printf '[ContractScopeGuard] advice: %s is outside the active plan allowed_paths. Not blocking (advice mode).\n' \
+        "$REL"
+      exit 0
+    fi
+  fi
+  exit 0   # approved + in-scope (or no contract) -> allow.
 fi
 
 # unapproved.

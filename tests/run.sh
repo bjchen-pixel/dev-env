@@ -221,6 +221,34 @@ test_contract_allows_path_glob_not_treated_as_prefix() {
   rm -rf "$dir"
 }
 
+# set_contract_plan <dir>
+#   Writes plans/foo.md as an APPROVED plan embedding the Q7 InvestSys contract,
+#   and points the active-plan marker at it. After this, PlanStatusGuard passes
+#   (Approved) and ContractScopeGuard becomes active (yaml block present).
+set_contract_plan() {
+  local dir="$1"
+  write_investsys_contract "$dir/plans/foo.md"
+  set_marker "$dir" "plans/foo.md"
+}
+
+test_contractscope_enforce_out_of_scope_blocks_exit2_stderr() {
+  # Approved plan WITH allowed_paths, edit deploy/secrets.env (deploy/ not in
+  # the contract) -> ContractScopeGuard blocks: exit 2 + [ContractScopeGuard]
+  # on stderr. PlanStatusGuard already passes (Approved), so this proves the
+  # second guard in the chain.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/deploy"; : > "$dir/deploy/secrets.env"
+  set_contract_plan "$dir"
+  run_guard "$dir" enforce "$dir/deploy/secrets.env"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "[ContractScopeGuard]" "stderr has ContractScopeGuard name"
+  assert_contains "$ERR" "NOT a user rejection" "stderr has anti-misfire wording"
+  assert_contains "$ERR" "deploy/secrets.env" "stderr names blocked target"
+  assert_not_contains "$OUT" "ContractScopeGuard" "stdout must not carry blocking msg"
+  rm -rf "$dir"
+}
+
 # --- tests -------------------------------------------------------------------
 
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr() {
@@ -471,6 +499,7 @@ test_contract_allows_path_glob_hit_config
 test_contract_allows_path_no_yaml_block_returns_1
 test_contract_allows_path_prefix_not_treated_as_glob
 test_contract_allows_path_glob_not_treated_as_prefix
+test_contractscope_enforce_out_of_scope_blocks_exit2_stderr
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
