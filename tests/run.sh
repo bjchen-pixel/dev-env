@@ -249,6 +249,131 @@ test_contractscope_enforce_out_of_scope_blocks_exit2_stderr() {
   rm -rf "$dir"
 }
 
+test_contractscope_enforce_in_scope_prefix_passes_silent() {
+  # Approved + contract + edit signals/vix.py (under signals/ prefix) -> allow.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/signals"; : > "$dir/signals/vix.py"
+  set_contract_plan "$dir"
+  run_guard "$dir" enforce "$dir/signals/vix.py"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
+test_contractscope_enforce_in_scope_glob_passes_silent() {
+  # Approved + contract + edit tests/test_vix.py (tests/test_*.py glob) -> allow.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/tests"; : > "$dir/tests/test_vix.py"
+  set_contract_plan "$dir"
+  run_guard "$dir" enforce "$dir/tests/test_vix.py"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
+test_contractscope_enforce_in_scope_config_glob_passes_silent() {
+  # Approved + contract + edit config/foo.yaml (config/*.yaml glob) -> allow.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/config"; : > "$dir/config/foo.yaml"
+  set_contract_plan "$dir"
+  run_guard "$dir" enforce "$dir/config/foo.yaml"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
+test_contractscope_enforce_reporoot_file_blocks() {
+  # portfolio.yaml at repo root: matches no prefix and no glob -> blocked.
+  local dir
+  dir=$(make_fixture_repo)
+  : > "$dir/portfolio.yaml"
+  set_contract_plan "$dir"
+  run_guard "$dir" enforce "$dir/portfolio.yaml"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "[ContractScopeGuard]" "stderr has guard name"
+  assert_contains "$ERR" "portfolio.yaml" "stderr names blocked target"
+  rm -rf "$dir"
+}
+
+test_contractscope_enforce_web_dir_blocks() {
+  # web/app.js: web/ not in contract -> blocked.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/web"; : > "$dir/web/app.js"
+  set_contract_plan "$dir"
+  run_guard "$dir" enforce "$dir/web/app.js"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "[ContractScopeGuard]" "stderr has guard name"
+  assert_contains "$ERR" "web/app.js" "stderr names blocked target"
+  rm -rf "$dir"
+}
+
+test_contractscope_noop_approved_no_yaml_block_passes() {
+  # Approved plan WITHOUT a yaml allowed_paths block -> ContractScopeGuard is a
+  # no-op (opt-in OFF) -> edit any impl file is allowed silently.
+  local dir
+  dir=$(make_fixture_repo)
+  write_plan_status "$dir" Approved   # plain plan, NO yaml block
+  set_marker "$dir" "plans/foo.md"
+  run_guard "$dir" enforce "$dir/deploy/secrets.env"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty (no-op opt-in)"
+  assert_eq "" "$ERR" "stderr empty (no-op opt-in)"
+  rm -rf "$dir"
+}
+
+test_contractscope_advice_out_of_scope_warns_exit0() {
+  # advice mode + out-of-scope edit -> exit 0, warning on stdout, stderr empty.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/deploy"; : > "$dir/deploy/secrets.env"
+  set_contract_plan "$dir"
+  run_guard "$dir" advice "$dir/deploy/secrets.env"
+  assert_eq 0 "$RC" "exit code"
+  assert_contains "$OUT" "ContractScopeGuard" "stdout has advice warning"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
+test_contractscope_off_out_of_scope_silent() {
+  # off mode + out-of-scope edit -> exit 0, fully silent.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/deploy"; : > "$dir/deploy/secrets.env"
+  set_contract_plan "$dir"
+  run_guard "$dir" off "$dir/deploy/secrets.env"
+  assert_eq 0 "$RC" "exit code"
+  assert_eq "" "$OUT" "stdout empty"
+  assert_eq "" "$ERR" "stderr empty"
+  rm -rf "$dir"
+}
+
+test_chain_order_draft_out_of_scope_blocked_by_planstatus_not_contract() {
+  # Chain order proof: plan is Draft (unapproved) AND target is out of contract
+  # scope. PlanStatusGuard must fire FIRST -> stderr says [PlanStatusGuard],
+  # NOT [ContractScopeGuard]. ContractScopeGuard never runs on unapproved plans.
+  local dir
+  dir=$(make_fixture_repo)
+  mkdir -p "$dir/deploy"; : > "$dir/deploy/secrets.env"
+  # contract plan but Draft status
+  write_investsys_contract "$dir/plans/foo.md"
+  # overwrite status to Draft (contract block stays)
+  sed 's/\*\*Status\*\*: Approved/**Status**: Draft/' "$dir/plans/foo.md" > "$dir/plans/foo.tmp" \
+    && mv "$dir/plans/foo.tmp" "$dir/plans/foo.md"
+  set_marker "$dir" "plans/foo.md"
+  run_guard "$dir" enforce "$dir/deploy/secrets.env"
+  assert_eq 2 "$RC" "exit code"
+  assert_contains "$ERR" "[PlanStatusGuard]" "PlanStatusGuard fires first"
+  assert_not_contains "$ERR" "[ContractScopeGuard]" "ContractScopeGuard must NOT run on unapproved plan"
+  rm -rf "$dir"
+}
+
 # --- tests -------------------------------------------------------------------
 
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr() {
@@ -500,6 +625,15 @@ test_contract_allows_path_no_yaml_block_returns_1
 test_contract_allows_path_prefix_not_treated_as_glob
 test_contract_allows_path_glob_not_treated_as_prefix
 test_contractscope_enforce_out_of_scope_blocks_exit2_stderr
+test_contractscope_enforce_in_scope_prefix_passes_silent
+test_contractscope_enforce_in_scope_glob_passes_silent
+test_contractscope_enforce_in_scope_config_glob_passes_silent
+test_contractscope_enforce_reporoot_file_blocks
+test_contractscope_enforce_web_dir_blocks
+test_contractscope_noop_approved_no_yaml_block_passes
+test_contractscope_advice_out_of_scope_warns_exit0
+test_contractscope_off_out_of_scope_silent
+test_chain_order_draft_out_of_scope_blocked_by_planstatus_not_contract
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
