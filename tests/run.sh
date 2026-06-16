@@ -614,9 +614,71 @@ test_workflow_surface_md_and_docs_pass() {
   rm -rf "$dir"
 }
 
+# --- Slice 3 helpers: write-handoff / stop-orchestrator ----------------------
+
+HANDOFF_LIB="$REPO/hooks/lib/write-handoff.sh"
+STOP_HOOK="$REPO/hooks/stop-orchestrator.sh"
+
+# call_write_handoff <dir> <reason>
+#   Sources the handoff lib INSIDE <dir> and calls write_handoff <reason>.
+#   Captures RC; resume.md ends up at <dir>/.ai/harness/handoff/resume.md.
+call_write_handoff() {
+  local dir="$1" reason="$2"
+  ( cd "$dir" && . "$HANDOFF_LIB" && write_handoff "$reason" )
+  RC=$?
+}
+
+# resume_path <dir> -> echoes the resume.md path for that fixture repo.
+resume_path() {
+  printf '%s' "$1/.ai/harness/handoff/resume.md"
+}
+
+# Independently recompute the expected changed-files set the SAME way the spec
+# mandates: (git diff --name-only HEAD) UNION (git ls-files --others
+# --exclude-standard), de-duplicated and sorted. Echoes one path per line.
+expected_changed_set() {
+  local dir="$1"
+  ( cd "$dir" && {
+      git diff --name-only HEAD 2>/dev/null
+      git ls-files --others --exclude-standard 2>/dev/null
+    } | sort -u )
+}
+
+# extract_changed_block <resume_file>
+#   Echoes the lines between the "## Changed files" marker and the next "##"
+#   header (exclusive), keeping only the actual file entries (lines starting
+#   with "- "), with the "- " stripped. Used for the reproducibility lock.
+extract_changed_block() {
+  awk '
+    /^## Changed files/ { inblk=1; next }
+    inblk && /^## / { inblk=0 }
+    inblk && /^- / { sub(/^- /,""); print }
+  ' "$1"
+}
+
+# --- Slice 3 D3 tests: write_handoff -----------------------------------------
+
+test_handoff_writes_active_plan_and_status() {
+  # With an Approved active plan, resume.md must record the active plan path and
+  # its status (both git/file-derived, no model text).
+  local dir
+  dir=$(make_fixture_repo)
+  write_plan_status "$dir" Approved
+  set_marker "$dir" "plans/foo.md"
+  call_write_handoff "$dir" "session-stop"
+  assert_eq 0 "$RC" "write_handoff return code"
+  local rf content
+  rf=$(resume_path "$dir")
+  content=$(cat "$rf" 2>/dev/null)
+  assert_contains "$content" "plans/foo.md" "resume.md names the active plan"
+  assert_contains "$content" "Approved" "resume.md records the plan status"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
+test_handoff_writes_active_plan_and_status
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
