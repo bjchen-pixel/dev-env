@@ -19,6 +19,7 @@ cat >/dev/null 2>&1 || true
 
 root=$(pwd -P)
 resume="$root/.ai/harness/handoff/resume.md"
+current_task="$root/tasks/current.md"
 
 if [ -f "$resume" ]; then
   printf '===== recovery context only (auto-injected by SessionStart hook) =====\n'
@@ -28,6 +29,11 @@ if [ -f "$resume" ]; then
   printf 'stale recovery state override the current task.\n'
   printf '\n----- previous session handoff (resume.md) -----\n'
   cat "$resume"
+fi
+
+if [ -f "$current_task" ]; then
+  printf '\n----- current task (tasks/current.md) -----\n'
+  cat "$current_task"
 fi
 
 exit 0

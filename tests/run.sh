@@ -943,6 +943,19 @@ test_session_start_resume_content_wrapped_in_disclaimer() {
   rm -rf "$dir"
 }
 
+test_session_start_includes_current_task_when_present() {
+  # When tasks/current.md exists, its content must be included in the injected
+  # context too. exit 0.
+  local dir
+  dir=$(make_fixture_repo)
+  write_resume "$dir" "RESUME_BODY_X"
+  write_current_task "$dir" "CURRENT_TASK_MARKER_99 ship slice 4"
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  assert_contains "$OUT" "CURRENT_TASK_MARKER_99" "tasks/current.md content is injected"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -987,6 +1000,7 @@ test_marker_root_worktree_consistency_symlink_match
 test_marker_root_worktree_consistency_root_mismatch_degrades
 test_workflow_surface_md_and_docs_pass
 test_session_start_resume_content_wrapped_in_disclaimer
+test_session_start_includes_current_task_when_present
 "
 
 for t in $TESTS; do
