@@ -810,6 +810,34 @@ test_handoff_non_git_repo_degrades() {
   rm -rf "$dir"
 }
 
+test_handoff_changed_block_reproducible_lock() {
+  # REPRODUCIBILITY LOCK: the changed-files block in resume.md, line by line,
+  # must EQUAL the set computed independently as
+  #   (git diff --name-only HEAD) U (git ls-files --others --exclude-standard)
+  # de-duplicated + sorted. Exact string equality proves zero model-generated
+  # content. Mix tracked-modified + untracked + a duplicate-source path to make
+  # the union/dedup observable. Stay <=80 so nothing is truncated.
+  local dir
+  dir=$(make_fixture_repo)
+  # commit two tracked files, then modify one (-> diff) and stage-delete none.
+  printf 'a\n' > "$dir/signals/x.py"
+  mkdir -p "$dir/detectors"; printf 'b\n' > "$dir/detectors/d.py"
+  ( cd "$dir" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m init )
+  printf 'a2\n' > "$dir/signals/x.py"          # tracked-modified
+  printf 'n\n'  > "$dir/scanners_new.py"        # untracked (repo root)
+  mkdir -p "$dir/notifiers"; printf 'm\n' > "$dir/notifiers/n.py"  # untracked nested
+  # independent expected set (the spec's exact recipe)
+  local expected
+  expected=$(expected_changed_set "$dir")
+  call_write_handoff "$dir" "session-stop"
+  assert_eq 0 "$RC" "write_handoff return code"
+  local actual
+  actual=$(extract_changed_block "$(resume_path "$dir")")
+  # exact, line-by-line equality (the lock).
+  assert_eq "$expected" "$actual" "changed block == independently-computed git union set (line-by-line)"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -819,6 +847,7 @@ test_handoff_changed_files_truncated_past_80
 test_handoff_shortstat_line_from_git
 test_handoff_records_time_and_reason
 test_handoff_non_git_repo_degrades
+test_handoff_changed_block_reproducible_lock
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
