@@ -39,6 +39,12 @@ write_handoff() {
     status="(no marker)"
   fi
 
+  # changed files: union of tracked-modified and untracked, dedup + sorted.
+  local changed
+  changed=$( { git diff --name-only HEAD 2>/dev/null
+               git ls-files --others --exclude-standard 2>/dev/null
+             } | sort -u )
+
   {
     printf '# Session handoff (recovery context)\n\n'
     printf '%s\n' "- generated: $now"
@@ -46,6 +52,12 @@ write_handoff() {
     printf '\n## Active plan\n\n'
     printf '%s\n' "- plan: $plan"
     printf '%s\n' "- status: $status"
+    printf '\n## Changed files\n\n'
+    if [ -n "$changed" ]; then
+      printf '%s\n' "$changed" | while IFS= read -r f; do
+        [ -n "$f" ] && printf '%s\n' "- $f"
+      done
+    fi
   } > "$out"
 
   return 0

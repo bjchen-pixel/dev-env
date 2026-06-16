@@ -675,10 +675,41 @@ test_handoff_writes_active_plan_and_status() {
   rm -rf "$dir"
 }
 
+test_handoff_changed_files_union_dedup_sorted() {
+  # changed files = (git diff --name-only HEAD) U (git ls-files --others
+  # --exclude-standard), de-duplicated + sorted. Construct a repo with one
+  # COMMITTED-then-MODIFIED tracked file (shows in diff) and one UNTRACKED new
+  # file (shows in ls-files --others). The block must contain BOTH, sorted, no
+  # dups. We deliberately create a tracked file that is ALSO listed nowhere else
+  # to ensure union, not just one source.
+  local dir
+  dir=$(make_fixture_repo)
+  # commit an initial tracked file so HEAD exists and diff is meaningful.
+  printf 'orig\n' > "$dir/signals/x.py"
+  ( cd "$dir" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m init )
+  # modify the tracked file (-> git diff --name-only HEAD shows signals/x.py)
+  printf 'changed\n' > "$dir/signals/x.py"
+  # add an untracked new file (-> git ls-files --others shows signals/a_new.py)
+  printf 'new\n' > "$dir/signals/a_new.py"
+  call_write_handoff "$dir" "session-stop"
+  assert_eq 0 "$RC" "write_handoff return code"
+  local rf block
+  rf=$(resume_path "$dir")
+  block=$(extract_changed_block "$rf")
+  assert_contains "$block" "signals/x.py" "changed block has the tracked-modified file"
+  assert_contains "$block" "signals/a_new.py" "changed block has the untracked file"
+  # sorted: a_new.py must come before x.py
+  local first
+  first=$(printf '%s\n' "$block" | head -1)
+  assert_eq "signals/a_new.py" "$first" "changed block is sorted (a_new before x)"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
 test_handoff_writes_active_plan_and_status
+test_handoff_changed_files_union_dedup_sorted
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
