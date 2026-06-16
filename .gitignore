@@ -2,3 +2,7 @@
 *.swp
 .idea/
 .vscode/
+
+# Regenerated every session-stop by the handoff Stop hook (timestamped,
+# self-referential) — runtime state, not source. See hooks/lib/write-handoff.sh.
+.ai/
