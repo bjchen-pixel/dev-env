@@ -47,27 +47,28 @@ contract_allows_path() {
   local contract_file="$1" rel="$2"
   [ -f "$contract_file" ] || return 1
 
+  # awk emits one cleaned item per line: drop the leading `  - ` list marker,
+  # strip inline `# ...` comments, trim surrounding whitespace.
   local items
   items=$(awk '
     /^```yaml[ \t]*$/ { if (!seen) { inblock=1; seen=1; next } }
     inblock && /^```/ { inblock=0 }
     inblock && inlist {
-      if ($0 ~ /^[ \t]+-[ \t]*/) { print; next }
-      else { inlist=0 }
+      if ($0 ~ /^[ \t]*-[ \t]*/) {
+        sub(/^[ \t]*-[ \t]*/, "")   # drop list marker
+        sub(/[ \t]*#.*$/, "")       # drop inline comment
+        sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "")  # trim
+        if (length($0) > 0) print
+        next
+      } else { inlist=0 }
     }
     inblock && /^allowed_paths:[ \t]*$/ { inlist=1 }
   ' "$contract_file")
 
-  local line item
+  local item
   IFS='
 '
-  for line in $items; do
-    # strip leading "  - ", inline "# ..." comment, surrounding whitespace.
-    item=$line
-    item=${item#*-}
-    item=${item%%#*}
-    # trim leading/trailing whitespace (bash 3.2 safe)
-    item="$(printf '%s' "$item" | sed 's/^[ \t]*//; s/[ \t]*$//')"
+  for item in $items; do
     [ -n "$item" ] || continue
     case "$item" in
       */)

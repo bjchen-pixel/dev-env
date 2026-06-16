@@ -142,6 +142,43 @@ test_contract_allows_path_prefix_hit() {
   rm -rf "$dir"
 }
 
+test_contract_allows_path_prefix_miss() {
+  # `deploy/secrets.env`: deploy/ is NOT in allowed_paths, and the file matches
+  # no glob => return 1.
+  local dir contract
+  dir=$(mktemp -d)
+  contract="$dir/plan.md"
+  write_investsys_contract "$contract"
+  if ( . "$REPO/hooks/lib/workflow-state.sh"; contract_allows_path "$contract" "deploy/secrets.env" ); then
+    fail "deploy/secrets.env must NOT be allowed (got return 0)"
+  fi
+  rm -rf "$dir"
+}
+
+test_contract_allows_path_glob_hit_tests() {
+  # `tests/test_*.py` (no trailing slash => glob). `tests/test_vix.py` must
+  # match via glob expansion of `*` => return 0. If the impl mistakenly treated
+  # this as a prefix, the literal `*` would not expand and this would fail.
+  local dir contract
+  dir=$(mktemp -d)
+  contract="$dir/plan.md"
+  write_investsys_contract "$contract"
+  ( . "$REPO/hooks/lib/workflow-state.sh"; contract_allows_path "$contract" "tests/test_vix.py" )
+  assert_eq 0 "$?" "tests/test_vix.py allowed by tests/test_*.py glob"
+  rm -rf "$dir"
+}
+
+test_contract_allows_path_glob_hit_config() {
+  # `config/*.yaml` glob => `config/foo.yaml` matches => return 0.
+  local dir contract
+  dir=$(mktemp -d)
+  contract="$dir/plan.md"
+  write_investsys_contract "$contract"
+  ( . "$REPO/hooks/lib/workflow-state.sh"; contract_allows_path "$contract" "config/foo.yaml" )
+  assert_eq 0 "$?" "config/foo.yaml allowed by config/*.yaml glob"
+  rm -rf "$dir"
+}
+
 # --- tests -------------------------------------------------------------------
 
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr() {
@@ -386,6 +423,9 @@ test_workflow_surface_md_and_docs_pass() {
 
 TESTS="
 test_contract_allows_path_prefix_hit
+test_contract_allows_path_prefix_miss
+test_contract_allows_path_glob_hit_tests
+test_contract_allows_path_glob_hit_config
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
