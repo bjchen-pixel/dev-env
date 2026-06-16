@@ -867,6 +867,24 @@ test_stop_hook_writes_resume_and_exits_0() {
   rm -rf "$dir"
 }
 
+test_handoff_idempotent_overwrite() {
+  # WITNESS: calling write_handoff twice must OVERWRITE (not append). The header
+  # "# Session handoff" must appear exactly once after two calls.
+  local dir
+  dir=$(make_fixture_repo)
+  call_write_handoff "$dir" "first"
+  call_write_handoff "$dir" "second"
+  assert_eq 0 "$RC" "second write_handoff return code"
+  local rf headers content
+  rf=$(resume_path "$dir")
+  headers=$(grep -c '^# Session handoff' "$rf")
+  assert_eq 1 "$headers" "header appears exactly once (overwrite, not append)"
+  content=$(cat "$rf")
+  assert_contains "$content" "second" "latest reason present"
+  assert_not_contains "$content" "first" "stale reason overwritten"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -878,6 +896,7 @@ test_handoff_records_time_and_reason
 test_handoff_non_git_repo_degrades
 test_handoff_changed_block_reproducible_lock
 test_stop_hook_writes_resume_and_exits_0
+test_handoff_idempotent_overwrite
 test_contract_allows_path_prefix_hit
 test_contract_allows_path_prefix_miss
 test_contract_allows_path_glob_hit_tests
