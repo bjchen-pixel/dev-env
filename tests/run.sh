@@ -3231,6 +3231,43 @@ evidence:
   rm -rf "$dir"
 }
 
+test_scope_conflict_pair_dedup_no_self() {
+  # PAIR-ENUMERATION LOCK (kills duplicate-pair and self-pair mutants): three
+  # active decisions all over auth/service.ts form exactly three unordered pairs
+  # {A,B},{A,C},{B,C}. Each pair must be reported exactly once and no decision
+  # may be paired with itself. We assert: rc non-zero, exactly 3 review lines,
+  # and no line names the same id twice (no "X and X").
+  local dir lines
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: a
+supersedes: []
+evidence:
+  commits: [a1]
+  files: [auth/service.ts]'
+  write_raw_entry "$dir" "AUTH-002" 'claim: b
+supersedes: []
+evidence:
+  commits: [a2]
+  files: [auth/service.ts]'
+  write_raw_entry "$dir" "AUTH-003" 'claim: c
+supersedes: []
+evidence:
+  commits: [a3]
+  files: [auth/service.ts]'
+  call_check_scope "$dir"
+  if [ "$RC" -eq 0 ]; then
+    fail "three active decisions over one file must flag"
+  fi
+  # exactly three review-required lines (one per unordered pair, no duplicates).
+  lines=$(printf '%s\n' "$OUT" | grep -c 'review required')
+  assert_eq 3 "$lines" "exactly 3 unordered pairs reported (no dup, no self-pair)"
+  # no self-pair: no line names the same id on both sides.
+  assert_not_contains "$OUT" "AUTH-001 and AUTH-001" "no self-pair for AUTH-001"
+  assert_not_contains "$OUT" "AUTH-002 and AUTH-002" "no self-pair for AUTH-002"
+  assert_not_contains "$OUT" "AUTH-003 and AUTH-003" "no self-pair for AUTH-003"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3379,6 +3416,7 @@ test_scope_conflict_flags_shared_file
 test_scope_conflict_disjoint_files_returns_0
 test_scope_conflict_only_active_pairs
 test_scope_conflict_is_read_only_no_mutation
+test_scope_conflict_pair_dedup_no_self
 "
 
 for t in $TESTS; do
