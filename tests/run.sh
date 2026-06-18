@@ -3141,6 +3141,29 @@ evidence:
   rm -rf "$dir"
 }
 
+test_scope_conflict_disjoint_files_returns_0() {
+  # OPPOSITE (kills the always-flag mutant): two active decisions whose
+  # evidence.files do NOT intersect must NOT flag. AUTH-001 governs
+  # auth/service.ts, LOG-003 governs logging/sink.ts — no shared ground, so no
+  # review required. Return 0, emit nothing.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+  files: [auth/service.ts]'
+  write_raw_entry "$dir" "LOG-003" 'claim: structured logging
+supersedes: []
+evidence:
+  commits: [b22b22b]
+  files: [logging/sink.ts]'
+  call_check_scope "$dir"
+  assert_eq 0 "$RC" "disjoint files -> no conflict, return 0"
+  assert_not_contains "$OUT" "review required" "no flag emitted when files do not intersect"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3286,6 +3309,7 @@ test_conflict_only_triggers_on_active_rejecter
 test_conflict_is_read_only_no_mutation
 test_add_still_persists_reproposed_rejected_option
 test_scope_conflict_flags_shared_file
+test_scope_conflict_disjoint_files_returns_0
 "
 
 for t in $TESTS; do
