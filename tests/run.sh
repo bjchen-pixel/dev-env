@@ -2627,6 +2627,62 @@ test_active_set_resolves_supersession_chain() {
   rm -rf "$dir"
 }
 
+# write_raw_entry <dir> <id> <body>  -> writes .claude/ledger/<id>.yaml directly,
+#   bypassing ledger_add. Used to inject fields the API would never write (e.g. a
+#   forged superseded_by, or a tampered status), so reverse-lock tests can prove
+#   the Reader ignores stored fields and trusts only real supersedes edges.
+write_raw_entry() {
+  local dir="$1" id="$2" body="$3"
+  mkdir -p "$dir/.claude/ledger"
+  printf '%s\n' "$body" > "$dir/.claude/ledger/$id.yaml"
+}
+
+test_active_set_ignores_manual_superseded_by_field() {
+  # REVERSE-LOCK: superseded_by is NEVER materialized. Manually forge a
+  # `superseded_by: [AUTH-999]` on AUTH-001. No real entry supersedes AUTH-001,
+  # so it MUST remain active. The active set is derived only from supersedes
+  # edges, never from a stored superseded_by.
+  local dir out
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+supersedes: []
+superseded_by: [AUTH-999]
+evidence:
+  commits: [a31f8f2]'
+  out=$(active_ids "$dir")
+  assert_contains "$out" "AUTH-001" "AUTH-001 stays active despite a forged superseded_by"
+  rm -rf "$dir"
+}
+
+test_active_set_ignores_stored_status_field() {
+  # REVERSE-LOCK: the stored `status:` line is redundant display sugar, not truth.
+  # Forge AUTH-001 with `status: superseded` even though NO entry supersedes it ->
+  # it MUST still be active. Forge AUTH-002 with `status: active` while AUTH-003
+  # really supersedes it -> AUTH-002 MUST be inactive. Truth = supersedes edges.
+  local dir out
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: lone but mislabeled
+status: superseded
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  write_raw_entry "$dir" "AUTH-002" 'claim: mislabeled active
+status: active
+supersedes: []
+evidence:
+  commits: [b11b11b]'
+  write_raw_entry "$dir" "AUTH-003" 'claim: real successor
+status: active
+supersedes: [AUTH-002]
+evidence:
+  commits: [c22c22c]'
+  out=$(active_ids "$dir")
+  assert_contains "$out" "AUTH-001" "status:superseded ignored -> 001 active (no real supersede)"
+  assert_contains "$out" "AUTH-003" "003 active"
+  assert_not_contains "$out" "AUTH-002" "status:active ignored -> 002 inactive (really superseded by 003)"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2755,6 +2811,8 @@ test_ledger_add_path_traversal_id_rejected
 test_ledger_add_never_mutates_existing_file
 test_active_set_excludes_superseded
 test_active_set_resolves_supersession_chain
+test_active_set_ignores_manual_superseded_by_field
+test_active_set_ignores_stored_status_field
 "
 
 for t in $TESTS; do
