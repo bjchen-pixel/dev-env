@@ -1255,9 +1255,1149 @@ test_install_md_documents_switches_and_killswitch() {
   assert_contains "$content" "disableAllHooks" "INSTALL documents the kill switch"
 }
 
+# --- Slice 1 (v3-007) helpers: preflight / doctor ----------------------------
+
+PREFLIGHT_LIB="$REPO/lib/preflight.sh"
+
+# make_pkgmgr_path <name>...
+#   Builds a tmp bin dir on $PATH containing only the listed package-manager
+#   stubs (each a harmless executable) PLUS the core tools the lib needs, so
+#   detect_pkg_manager can be exercised deterministically regardless of what the
+#   CI machine actually has installed. Echoes the tmp bin path.
+make_pkgmgr_path() {
+  local bindir t p
+  bindir=$(mktemp -d)
+  # core tools the lib + bash need (no package managers among these).
+  for t in bash sh cat awk sed grep printf pwd dirname basename env mktemp rm command; do
+    p=$(command -v "$t" 2>/dev/null)
+    [ -n "$p" ] && ln -sf "$p" "$bindir/$t"
+  done
+  # requested package-manager stubs (harmless: just exit 0).
+  for t in "$@"; do
+    printf '#!/bin/sh\nexit 0\n' > "$bindir/$t"
+    chmod +x "$bindir/$t"
+  done
+  printf '%s' "$bindir"
+}
+
+# --- Slice 1 (v3-007) tests: lib/preflight.sh --------------------------------
+
+test_install_cmd_for_brew_jq() {
+  # install_cmd_for is a PURE mapping (pkg_manager x dep -> install command
+  # string). It executes nothing. brew + jq must map to `brew install jq`.
+  local out
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for brew jq )
+  assert_eq "brew install jq" "$out" "brew x jq install command string"
+}
+
+test_install_cmd_for_apt_jq() {
+  # apt is a DIFFERENT package manager: its install command differs (sudo +
+  # apt-get -y). This forces a second branch, not a hardcoded brew string.
+  local out
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for apt jq )
+  assert_eq "sudo apt-get install -y jq" "$out" "apt x jq install command string"
+}
+
+test_install_cmd_for_all_managers_jq() {
+  # The remaining managers each map to their native install command for jq.
+  local out
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for dnf jq )
+  assert_eq "sudo dnf install -y jq" "$out" "dnf x jq"
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for yum jq )
+  assert_eq "sudo yum install -y jq" "$out" "yum x jq"
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for pacman jq )
+  assert_eq "sudo pacman -S --noconfirm jq" "$out" "pacman x jq"
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for zypper jq )
+  assert_eq "sudo zypper install -y jq" "$out" "zypper x jq"
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for winget jq )
+  assert_eq "winget install jqlang.jq" "$out" "winget x jq"
+}
+
+test_install_cmd_for_unknown_returns_1() {
+  # An unrecognized package manager yields empty stdout and return 1 (so the
+  # caller falls through to "print official link and stop").
+  local out rc
+  out=$( . "$PREFLIGHT_LIB"; install_cmd_for frobnicate jq ); rc=$?
+  assert_eq 1 "$rc" "unknown manager returns 1"
+  assert_eq "" "$out" "unknown manager prints nothing"
+}
+
+test_detect_pkg_manager_picks_brew_when_only_brew() {
+  # With a PATH containing ONLY the brew stub (plus core tools), detect must
+  # return `brew`. PATH injection makes this deterministic regardless of CI host.
+  local bindir out
+  bindir=$(make_pkgmgr_path brew)
+  out=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; detect_pkg_manager' )
+  assert_eq "brew" "$out" "detect picks brew when only brew present"
+  rm -rf "$bindir"
+}
+
+test_detect_pkg_manager_precedence_brew_over_apt() {
+  # With BOTH brew and apt-get present, detect must return brew (defined order),
+  # not "whatever it found first by luck". Kills a non-deterministic mutant.
+  local bindir out
+  bindir=$(make_pkgmgr_path brew apt-get)
+  out=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; detect_pkg_manager' )
+  assert_eq "brew" "$out" "brew takes precedence over apt"
+  rm -rf "$bindir"
+}
+
+test_detect_pkg_manager_apt_when_no_brew() {
+  # Only apt-get present (no brew) -> detect returns `apt`.
+  local bindir out
+  bindir=$(make_pkgmgr_path apt-get)
+  out=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; detect_pkg_manager' )
+  assert_eq "apt" "$out" "detect returns apt when only apt-get present"
+  rm -rf "$bindir"
+}
+
+test_detect_pkg_manager_none_returns_1() {
+  # PATH with NO package manager (only core tools) -> empty stdout, return 1.
+  local bindir out rc
+  bindir=$(make_pkgmgr_path)   # no managers requested
+  out=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; detect_pkg_manager'; )
+  rc=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; detect_pkg_manager >/dev/null; echo $?' )
+  assert_eq "" "$out" "no manager -> empty stdout"
+  assert_eq 1 "$rc" "no manager -> return 1"
+  rm -rf "$bindir"
+}
+
+test_dep_present_true_for_existing() {
+  # dep_present returns 0 when the dependency is resolvable on PATH.
+  local bindir rc
+  bindir=$(make_pkgmgr_path)   # core tools include `bash`
+  rc=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; dep_present bash; echo $?' )
+  assert_eq 0 "$rc" "dep_present 0 for an existing tool"
+  rm -rf "$bindir"
+}
+
+test_dep_present_false_for_missing() {
+  # dep_present returns 1 for a tool that is not on PATH.
+  local bindir rc
+  bindir=$(make_pkgmgr_path)
+  rc=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; dep_present definitely_not_a_real_tool_xyz; echo $?' )
+  assert_eq 1 "$rc" "dep_present 1 for a missing tool"
+  rm -rf "$bindir"
+}
+
+test_dep_tier_git_required_jq_optional_claude_detectonly() {
+  # The dependency tiering: git is required (can't bootstrap without it), jq is
+  # optional (awk fallback / degrade), Claude Code is detect-only (never auto
+  # installed — it's a prerequisite tool).
+  local t
+  t=$( . "$PREFLIGHT_LIB"; dep_tier git );    assert_eq "required" "$t" "git is required"
+  t=$( . "$PREFLIGHT_LIB"; dep_tier bash );   assert_eq "required" "$t" "bash is required"
+  t=$( . "$PREFLIGHT_LIB"; dep_tier jq );     assert_eq "optional" "$t" "jq is optional"
+  t=$( . "$PREFLIGHT_LIB"; dep_tier claude ); assert_eq "detect-only" "$t" "claude is detect-only"
+}
+
+test_dep_tier_unknown_defaults_optional() {
+  # An unknown dependency defaults to `optional` — the SAFE default: never
+  # silently treat an unknown tool as required (which would block the user).
+  local t
+  t=$( . "$PREFLIGHT_LIB"; dep_tier some_unknown_dep )
+  assert_eq "optional" "$t" "unknown dep defaults to optional (safe)"
+}
+
+test_should_install_auto_always_yes() {
+  # should_install <auto_flag> <answer>: with --auto (auto=1) it must return 0
+  # (install) UNCONDITIONALLY, ignoring the answer (unattended one-shot).
+  local rc
+  rc=$( . "$PREFLIGHT_LIB"; should_install 1 n; echo $? )
+  assert_eq 0 "$rc" "auto=1 installs even when answer is n"
+}
+
+test_should_install_interactive_y_yes() {
+  # Interactive (auto=0) with an affirmative answer -> return 0 (install).
+  local rc
+  rc=$( . "$PREFLIGHT_LIB"; should_install 0 y; echo $? )
+  assert_eq 0 "$rc" "auto=0 + y -> install"
+}
+
+test_should_install_interactive_n_or_empty_no() {
+  # Interactive (auto=0) with a negative or EMPTY answer (bare Enter) -> return
+  # 1 (do NOT install). Empty defaults to NO (conservative; never silently
+  # escalate). Kills a mutant that defaults empty to yes.
+  local rc
+  rc=$( . "$PREFLIGHT_LIB"; should_install 0 n; echo $? )
+  assert_eq 1 "$rc" "auto=0 + n -> skip"
+  rc=$( . "$PREFLIGHT_LIB"; should_install 0 ""; echo $? )
+  assert_eq 1 "$rc" "auto=0 + empty -> skip (conservative default)"
+}
+
+test_preflight_report_marks_present_and_missing_with_tier() {
+  # preflight_report prints, per dependency, present/missing AND its tier. Use a
+  # PATH that HAS git+bash (core tools) but NOT jq/claude, so the report must
+  # show git present+required and jq missing+optional. PATH injection makes the
+  # present/missing facts deterministic.
+  local bindir out
+  bindir=$(make_pkgmgr_path)        # core tools include git? ensure git present
+  ln -sf "$(command -v git)" "$bindir/git"
+  out=$( PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; preflight_report' )
+  assert_contains "$out" "git" "report names git"
+  assert_contains "$out" "required" "report shows a required tier"
+  assert_contains "$out" "present" "report marks something present"
+  assert_contains "$out" "jq" "report names jq"
+  assert_contains "$out" "optional" "report shows the optional tier"
+  assert_contains "$out" "missing" "report marks the absent jq as missing"
+  rm -rf "$bindir"
+}
+
+test_preflight_report_is_pure_no_writes() {
+  # IDEMPOTENCE / PURITY LOCK: preflight_report must be side-effect free — two
+  # runs produce identical output AND it writes NO files into the working dir.
+  # This is the Slice-1 idempotence anchor (detection has no side effects).
+  local bindir wd out1 out2 before after
+  bindir=$(make_pkgmgr_path)
+  ln -sf "$(command -v git)" "$bindir/git"
+  wd=$(mktemp -d)
+  before=$( cd "$wd" && ls -A | sort )
+  out1=$( cd "$wd" && PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; preflight_report' )
+  out2=$( cd "$wd" && PATH="$bindir" bash -c '. "'"$PREFLIGHT_LIB"'"; preflight_report' )
+  after=$( cd "$wd" && ls -A | sort )
+  assert_eq "$out1" "$out2" "report is deterministic across runs"
+  assert_eq "$before" "$after" "report writes no files (pure)"
+  rm -rf "$bindir" "$wd"
+}
+
+INSTALL_SH="$REPO/install.sh"
+
+# run_install_sh <bindir> [args...]  -> sets RC / OUT / ERR globals.
+#   Runs install.sh with PATH restricted to <bindir> so the present/missing set
+#   is deterministic. SENTINEL marker for run_install side-effects is captured
+#   via INSTALL_CMD_SINK env when relevant.
+run_install_sh() {
+  local bindir="$1"; shift
+  local out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  PATH="$bindir" bash "$INSTALL_SH" "$@" >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+test_missing_git_prints_official_link_and_stops() {
+  # git is REQUIRED and never auto-installed (bootstrap tool). With git ABSENT,
+  # install.sh must print the official git download link and stop with a
+  # non-zero exit, attempting NO install command.
+  local bindir
+  bindir=$(make_pkgmgr_path brew)   # brew present, but git absent
+  run_install_sh "$bindir" --preflight-only
+  if [ "$RC" -eq 0 ]; then
+    fail "missing git must cause a non-zero exit (got 0)"
+  fi
+  assert_contains "$OUT$ERR" "git-scm.com" "prints the official git download link"
+  assert_not_contains "$OUT$ERR" "brew install git" "must NOT attempt to install git"
+  rm -rf "$bindir"
+}
+
+test_missing_required_no_pkgmgr_prints_link_stops() {
+  # A required dep missing AND no package manager detected -> print link + stop.
+  # Here git is missing and the PATH has NO package manager at all.
+  local bindir
+  bindir=$(make_pkgmgr_path)   # no managers, no git
+  run_install_sh "$bindir" --preflight-only
+  if [ "$RC" -eq 0 ]; then
+    fail "missing required + no pkg manager must exit non-zero"
+  fi
+  assert_contains "$OUT$ERR" "git-scm.com" "prints the official download link"
+  rm -rf "$bindir"
+}
+
+test_missing_optional_jq_does_not_block() {
+  # jq is OPTIONAL: when git+bash are present but jq is absent, preflight must
+  # report jq missing yet NOT fail (exit 0) — the awk fallback / degrade path
+  # covers no-jq. Run with --auto and answer no implicitly so nothing installs.
+  local bindir
+  bindir=$(make_pkgmgr_path)   # core tools + git, NO jq, NO manager
+  ln -sf "$(command -v git)" "$bindir/git"
+  run_install_sh "$bindir" --preflight-only
+  assert_eq 0 "$RC" "missing optional jq does not block (exit 0)"
+  assert_contains "$OUT$ERR" "jq" "report still names jq"
+  rm -rf "$bindir"
+}
+
+test_claude_code_detect_only_never_installs() {
+  # Claude Code is detect-only: when absent, install.sh reports it missing and
+  # may print a link, but must NEVER build/run an install command for it.
+  local bindir
+  bindir=$(make_pkgmgr_path brew)   # brew present so an install WOULD be possible
+  ln -sf "$(command -v git)" "$bindir/git"
+  run_install_sh "$bindir" --preflight-only
+  assert_not_contains "$OUT$ERR" "install claude" "must NOT attempt to install Claude Code"
+  assert_not_contains "$OUT$ERR" "brew install claude" "no brew install for claude"
+  rm -rf "$bindir"
+}
+
+test_run_install_executes_only_when_gated_yes() {
+  # The side-effecting run_install must execute its command ONLY when gated yes.
+  # We inject a HARMLESS command (printf SENTINEL) — NOT a real package install —
+  # to prove the gate wiring without touching the system.
+  local out_yes out_no
+  out_yes=$( . "$PREFLIGHT_LIB"; if should_install 1 n; then run_install 'printf SENTINEL_YES'; fi )
+  assert_contains "$out_yes" "SENTINEL_YES" "gated yes -> command executes"
+  out_no=$( . "$PREFLIGHT_LIB"; if should_install 0 n; then run_install 'printf SENTINEL_NO'; fi )
+  assert_not_contains "$out_no" "SENTINEL_NO" "gated no -> command does NOT execute"
+}
+
+test_install_cmd_contains_sudo_for_apt_explicit_escalation() {
+  # Privilege escalation must be EXPLICIT in the command string (never silent):
+  # apt/dnf/etc carry `sudo`; brew (user-level) does not. This locks the
+  # ticket's "no silent escalation" principle into the visible command string.
+  local apt_cmd brew_cmd
+  apt_cmd=$( . "$PREFLIGHT_LIB"; install_cmd_for apt jq )
+  brew_cmd=$( . "$PREFLIGHT_LIB"; install_cmd_for brew jq )
+  assert_contains "$apt_cmd" "sudo" "apt install command shows explicit sudo"
+  assert_not_contains "$brew_cmd" "sudo" "brew install command has no sudo (user-level)"
+}
+
+# --- Slice 2 (v3-007) helpers: Mode A statusLine merge -----------------------
+
+SETTINGS_MERGE_LIB="$REPO/lib/settings-merge.sh"
+
+# repo_gauge_path — the canonical absolute path to THIS repo's context-gauge.sh.
+# Mode A must point the statusLine command at the locally-cloned gauge script.
+repo_gauge_path() {
+  printf '%s' "$REPO/statusline/context-gauge.sh"
+}
+
+# mask_jq_bin — builds a tmp bin dir with core tools but NO jq, echoes its path.
+# Used to drive the no-jq degrade path with a fresh-shell `command -v jq` mask.
+mask_jq_bin() {
+  local bindir t p
+  bindir=$(mktemp -d)
+  for t in bash sh cat awk sed grep printf pwd dirname basename env mktemp rm command cp mv date ls; do
+    p=$(command -v "$t" 2>/dev/null)
+    [ -n "$p" ] && ln -sf "$p" "$bindir/$t"
+  done
+  printf '%s' "$bindir"
+}
+
+# --- Slice 2 (v3-007) tests: lib/settings-merge.sh ---------------------------
+
+test_statusline_command_points_at_local_clone_gauge() {
+  # PURE: statusline_command builds the `command` STRING for the statusLine key.
+  # It must be `bash "<abs>/statusline/context-gauge.sh"` pointing at THIS repo's
+  # locally-cloned gauge (canonical absolute path), matching INSTALL.md §7 shape.
+  local out gauge
+  gauge=$(repo_gauge_path)
+  out=$( . "$SETTINGS_MERGE_LIB"; statusline_command "$gauge" )
+  assert_eq "bash \"$gauge\"" "$out" "command string wraps the gauge abs path with bash + quotes"
+}
+
+test_merged_settings_preserves_other_keys_and_sets_statusline() {
+  # PURE (jq): given an existing settings file with OTHER top-level keys
+  # (effortLevel/theme/model) and NO statusLine, merged_settings_json must print
+  # JSON that (1) keeps every existing key untouched and (2) adds a statusLine
+  # whose command points at the local gauge. It writes NOTHING.
+  local dir f gauge merged
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high","theme":"dark","model":"opus"}\n' > "$f"
+  merged=$( . "$SETTINGS_MERGE_LIB"; merged_settings_json "$f" "$gauge" )
+  # other keys preserved (parse the result with jq for structural truth)
+  assert_eq "high" "$(printf '%s' "$merged" | jq -r '.effortLevel')" "effortLevel preserved"
+  assert_eq "dark" "$(printf '%s' "$merged" | jq -r '.theme')" "theme preserved"
+  assert_eq "opus" "$(printf '%s' "$merged" | jq -r '.model')" "model preserved"
+  # statusLine added, type=command, command points at the local gauge
+  assert_eq "command" "$(printf '%s' "$merged" | jq -r '.statusLine.type')" "statusLine.type=command"
+  assert_eq "bash \"$gauge\"" "$(printf '%s' "$merged" | jq -r '.statusLine.command')" "statusLine.command points at local gauge"
+  # the source file on disk is untouched (pure: no write)
+  assert_not_contains "$(cat "$f")" "statusLine" "source file untouched (no write)"
+  rm -rf "$dir"
+}
+
+test_merged_settings_replaces_old_statusline_and_keeps_others() {
+  # PURE (jq): fixture has an OLD statusLine (different command path) AND other
+  # keys. merged_settings_json must REPLACE the statusLine command with the local
+  # gauge path (not nest/append) while preserving other keys, and the result must
+  # contain exactly one statusLine command (the new one).
+  local dir f gauge merged
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"theme":"light","statusLine":{"type":"command","command":"bash \\"/old/elsewhere/context-gauge.sh\\""}}\n' > "$f"
+  merged=$( . "$SETTINGS_MERGE_LIB"; merged_settings_json "$f" "$gauge" )
+  assert_eq "light" "$(printf '%s' "$merged" | jq -r '.theme')" "theme preserved through replace"
+  assert_eq "bash \"$gauge\"" "$(printf '%s' "$merged" | jq -r '.statusLine.command')" "old command replaced with local gauge"
+  assert_not_contains "$merged" "/old/elsewhere/" "old path is gone, not appended"
+  rm -rf "$dir"
+}
+
+test_statusline_matches_true_when_identical_false_otherwise() {
+  # PURE (jq): statusline_matches <file> <gauge> returns 0 iff the file ALREADY
+  # has a statusLine whose command equals the desired local-gauge command. This
+  # is the idempotency primitive: apply must no-op when this returns 0.
+  local dir same diff none gauge rc
+  dir=$(mktemp -d); gauge=$(repo_gauge_path)
+  same="$dir/same.json"; diff="$dir/diff.json"; none="$dir/none.json"
+  printf '{"theme":"dark","statusLine":{"type":"command","command":"bash \\"%s\\""}}\n' "$gauge" > "$same"
+  printf '{"statusLine":{"type":"command","command":"bash \\"/other/gauge.sh\\""}}\n' > "$diff"
+  printf '{"theme":"dark"}\n' > "$none"
+  rc=$( . "$SETTINGS_MERGE_LIB"; statusline_matches "$same" "$gauge"; echo $? )
+  assert_eq 0 "$rc" "identical statusLine -> match (0)"
+  rc=$( . "$SETTINGS_MERGE_LIB"; statusline_matches "$diff" "$gauge"; echo $? )
+  assert_eq 1 "$rc" "different statusLine command -> no match (1)"
+  rc=$( . "$SETTINGS_MERGE_LIB"; statusline_matches "$none" "$gauge"; echo $? )
+  assert_eq 1 "$rc" "no statusLine at all -> no match (1)"
+  rm -rf "$dir"
+}
+
+test_settings_is_valid_json_true_for_good_empty_missing_false_for_broken() {
+  # PURE (jq): settings_is_valid_json <file> returns 0 for parseable JSON, for an
+  # empty file, and for a missing file (both treated as empty {} downstream);
+  # returns 1 for unparseable (broken) JSON. Guards apply against clobbering a
+  # file we can't safely parse.
+  local dir good empty broken missing rc
+  dir=$(mktemp -d)
+  good="$dir/good.json"; empty="$dir/empty.json"; broken="$dir/broken.json"; missing="$dir/nope.json"
+  printf '{"theme":"dark"}\n' > "$good"
+  : > "$empty"
+  printf '{theme: dark,,,\n' > "$broken"
+  rc=$( . "$SETTINGS_MERGE_LIB"; settings_is_valid_json "$good"; echo $? )
+  assert_eq 0 "$rc" "good JSON -> valid (0)"
+  rc=$( . "$SETTINGS_MERGE_LIB"; settings_is_valid_json "$empty"; echo $? )
+  assert_eq 0 "$rc" "empty file -> valid (0, treated as {})"
+  rc=$( . "$SETTINGS_MERGE_LIB"; settings_is_valid_json "$missing"; echo $? )
+  assert_eq 0 "$rc" "missing file -> valid (0, treated as {})"
+  rc=$( . "$SETTINGS_MERGE_LIB"; settings_is_valid_json "$broken"; echo $? )
+  assert_eq 1 "$rc" "broken JSON -> invalid (1)"
+  rm -rf "$dir"
+}
+
+test_apply_statusline_clean_creates_then_noop_on_rerun() {
+  # FIXTURE (1) clean / no file. apply_statusline must CREATE settings.json with
+  # the statusLine pointing at the local gauge, return 0. RERUN must be a NO-OP:
+  # identical content AND a no-op signal (not a second write). Idempotency lock.
+  local dir f gauge out1 out2 c1 c2
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  # file does NOT exist yet
+  out1=$( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" )
+  assert_eq 0 "$?" "first apply returns 0"
+  if [ ! -f "$f" ]; then fail "first apply must create settings.json"; fi
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "created statusLine points at local gauge"
+  c1=$(cat "$f")
+  out2=$( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" )
+  assert_eq 0 "$?" "rerun returns 0"
+  c2=$(cat "$f")
+  assert_eq "$c1" "$c2" "rerun leaves content unchanged (idempotent)"
+  assert_contains "$out2" "no-op" "rerun reports a no-op (did not rewrite)"
+  rm -rf "$dir"
+}
+
+test_apply_statusline_otherkeys_backs_up_preserves_then_noop() {
+  # FIXTURE (2) other keys, NO statusLine. apply must (a) back up the original
+  # FIRST (a .bak.* sibling whose content equals the pre-write original), (b)
+  # preserve the other keys, (c) add the statusLine. Rerun -> no-op (no second
+  # write, content stable). Backup-before-write + idempotency lock.
+  local dir f gauge orig c1 c2 baks
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high","theme":"dark","model":"opus"}\n' > "$f"
+  orig=$(cat "$f")
+  ( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" ) >/dev/null
+  assert_eq 0 "$?" "first apply returns 0"
+  # a backup exists and equals the ORIGINAL (proves backed up before overwrite)
+  baks=$(ls "$dir"/settings.json.bak.* 2>/dev/null | head -1)
+  if [ -z "$baks" ]; then fail "apply must create a .bak backup before writing"; fi
+  assert_eq "$orig" "$(cat "$baks" 2>/dev/null)" "backup holds the pre-write original"
+  # other keys preserved + statusLine added
+  assert_eq "high" "$(jq -r '.effortLevel' "$f")" "effortLevel preserved on disk"
+  assert_eq "opus" "$(jq -r '.model' "$f")" "model preserved on disk"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "statusLine written on disk"
+  c1=$(cat "$f")
+  # rerun -> no-op, content unchanged
+  local out2
+  out2=$( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" )
+  c2=$(cat "$f")
+  assert_eq "$c1" "$c2" "rerun unchanged (idempotent)"
+  assert_contains "$out2" "no-op" "rerun is a no-op"
+  rm -rf "$dir"
+}
+
+test_apply_statusline_old_different_updates_then_noop() {
+  # FIXTURE (3) existing OLD statusLine with a DIFFERENT command path. First
+  # apply must UPDATE it to the local gauge (not no-op), backing up the original
+  # (which still holds the old path). Second apply -> no-op. update-when-diff +
+  # idempotency lock.
+  local dir f gauge baks c1 c2 out1 out2
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"theme":"light","statusLine":{"type":"command","command":"bash \\"/old/elsewhere/context-gauge.sh\\""}}\n' > "$f"
+  out1=$( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" )
+  assert_not_contains "$out1" "no-op" "first apply must NOT no-op when statusLine differs"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "statusLine updated to local gauge"
+  assert_eq "light" "$(jq -r '.theme' "$f")" "other key preserved through update"
+  baks=$(ls "$dir"/settings.json.bak.* 2>/dev/null | head -1)
+  assert_contains "$(cat "$baks" 2>/dev/null)" "/old/elsewhere/" "backup preserves the old statusLine path"
+  c1=$(cat "$f")
+  out2=$( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" )
+  c2=$(cat "$f")
+  assert_eq "$c1" "$c2" "rerun unchanged (idempotent)"
+  assert_contains "$out2" "no-op" "rerun is a no-op"
+  rm -rf "$dir"
+}
+
+test_apply_statusline_broken_json_does_not_clobber_backs_up_and_degrades() {
+  # FIXTURE (4) broken JSON. apply must NOT overwrite (no data loss): the file
+  # content stays byte-identical, a backup is made, a non-zero return signals
+  # "did not write", and a copy-pasteable statusLine block is printed for manual
+  # merge. Rerun is equally non-destructive (idempotent in the sense of "never
+  # clobbers"). The original content must survive both runs.
+  local dir f gauge orig rc out c_after baks
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{ this is : not, valid json ]]]\n' > "$f"
+  orig=$(cat "$f")
+  out=$( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" 2>&1 ); rc=$?
+  if [ "$rc" -eq 0 ]; then fail "broken JSON must NOT return 0 (must signal it did not write)"; fi
+  c_after=$(cat "$f")
+  assert_eq "$orig" "$c_after" "broken JSON file is NOT clobbered (content intact)"
+  baks=$(ls "$dir"/settings.json.bak.* 2>/dev/null | head -1)
+  if [ -z "$baks" ]; then fail "broken JSON path must still back up the original"; fi
+  assert_eq "$orig" "$(cat "$baks")" "backup holds the broken original verbatim"
+  # copy-pasteable complete block printed for manual merge
+  assert_contains "$out" "\"statusLine\"" "degrade prints a statusLine JSON block"
+  assert_contains "$out" "bash \\\"$gauge\\\"" "block carries the local gauge command"
+  # rerun still non-destructive
+  ( . "$SETTINGS_MERGE_LIB"; apply_statusline "$f" "$gauge" ) >/dev/null 2>&1
+  assert_eq "$orig" "$(cat "$f")" "rerun still does not clobber broken JSON"
+  rm -rf "$dir"
+}
+
+test_apply_statusline_no_jq_degrades_prints_block_and_does_not_write() {
+  # NO-JQ DEGRADE (candidate (b)). With jq MASKED via a fresh-shell command -v
+  # mask, apply must NOT write the file; instead print a COMPLETE copy-pasteable
+  # statusLine JSON block (type=command + the local-gauge command), say where to
+  # paste it, and a restore note. The clean fixture file must remain ABSENT
+  # (proves no write). Uses the v3-005 S5-4 fresh-shell mask technique.
+  local dir f gauge jqbin out
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  jqbin=$(mask_jq_bin)
+  # sanity: jq must NOT be resolvable under the masked PATH
+  if PATH="$jqbin" bash -c 'command -v jq >/dev/null 2>&1'; then
+    fail "jq mask ineffective: jq still resolvable under masked PATH"
+  fi
+  out=$( PATH="$jqbin" bash -c '. "'"$SETTINGS_MERGE_LIB"'"; apply_statusline "'"$f"'" "'"$gauge"'"' )
+  assert_eq 0 "$?" "no-jq degrade returns 0 (does not hard-fail)"
+  if [ -e "$f" ]; then fail "no-jq path must NOT write the settings file"; fi
+  # complete, copy-pasteable block
+  assert_contains "$out" "\"statusLine\"" "block has the statusLine key"
+  assert_contains "$out" "\"type\": \"command\"" "block has type=command"
+  assert_contains "$out" "bash \\\"$gauge\\\"" "block carries the local-gauge command"
+  assert_contains "$out" "jq not found" "explains why it degraded"
+  assert_contains "$out" "restore" "block includes a restore instruction"
+  rm -rf "$dir" "$jqbin"
+}
+
+test_install_sh_mode_a_writes_statusline_to_injected_settings_file() {
+  # END-TO-END (Mode A through install.sh): with --mode-a and an INJECTED target
+  # via SETTINGS_FILE (a fixture temp file — NEVER the real ~/.claude/), install.sh
+  # must merge a statusLine whose command points at THIS repo's clone of
+  # context-gauge.sh (computed install.sh's own way), preserving other keys.
+  # Rerun is idempotent (no-op). This test must NOT touch the real HOME.
+  local dir f gauge out1 out2 c1 c2 bindir
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high"}\n' > "$f"
+  # PATH with the full tool set (cp/mv/date/ls for backup+write) PLUS git+jq so
+  # preflight passes and the jq merge runs. mask_jq_bin gives the full core set;
+  # we add jq+git back on top.
+  bindir=$(mask_jq_bin)
+  ln -sf "$(command -v git)" "$bindir/git"
+  ln -sf "$(command -v jq)" "$bindir/jq"
+  out1=$( PATH="$bindir" SETTINGS_FILE="$f" bash "$INSTALL_SH" --mode-a 2>&1 )
+  assert_eq 0 "$?" "install.sh --mode-a returns 0"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "install.sh wired statusLine to local gauge clone"
+  assert_eq "high" "$(jq -r '.effortLevel' "$f")" "install.sh preserved the existing key"
+  c1=$(cat "$f")
+  out2=$( PATH="$bindir" SETTINGS_FILE="$f" bash "$INSTALL_SH" --mode-a 2>&1 )
+  c2=$(cat "$f")
+  assert_eq "$c1" "$c2" "install.sh --mode-a rerun is idempotent (no change)"
+  assert_contains "$out2" "no-op" "install.sh --mode-a rerun reports no-op"
+  rm -rf "$dir" "$bindir"
+}
+
+# --- Slice 3 (v3-007) helpers: Mode B adopt ----------------------------------
+
+ADOPT_LIB="$REPO/lib/adopt.sh"
+
+# make_target_repo  -> echoes path to a fresh tmp git repo (the Mode B target),
+#   with an initial commit so `git rev-parse --show-toplevel` resolves. Used as
+#   the adopt target; lives entirely under mktemp (never the real FS / HOME).
+make_target_repo() {
+  local dir
+  dir=$(mktemp -d)
+  git -C "$dir" init -q
+  printf '# target\n' > "$dir/README.md"
+  ( cd "$dir" && git -c user.email=t@t -c user.name=t add -A && \
+    git -c user.email=t@t -c user.name=t commit -q -m init )
+  printf '%s' "$dir"
+}
+
+# --- Slice 3 (v3-007) tests: lib/adopt.sh ------------------------------------
+
+test_adopt_hook_command_preserves_git_rev_parse_literal() {
+  # PURE: adopt_hook_command builds the `command` STRING for a hook entry. It MUST
+  # keep the literal `$(git rev-parse --show-toplevel)` shell expansion verbatim
+  # (NOT resolve it to an absolute path at adopt time) so the target repo self-
+  # resolves the path and stays portable if moved. Shape matches this repo's
+  # .claude/settings.json: bash "$(git rev-parse --show-toplevel)/hooks/<script>".
+  local out
+  out=$( . "$ADOPT_LIB"; adopt_hook_command "pre-edit-guard.sh" )
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/pre-edit-guard.sh"' "$out" \
+    "command keeps the literal git rev-parse expansion and points at the hook"
+  assert_contains "$out" 'git rev-parse --show-toplevel' "literal git rev-parse preserved (portability key)"
+}
+
+test_adopt_merged_settings_wires_three_hooks_with_literal_command() {
+  # PURE (jq): given an empty/{} target settings, adopt_merged_settings_json must
+  # print JSON wiring all THREE hook entries — SessionStart (session-start-
+  # context.sh), PreToolUse matcher "Edit|Write" (pre-edit-guard.sh), Stop (stop-
+  # orchestrator.sh) — each command being the literal `$(git rev-parse ...)` form
+  # with timeout 30. Writes NOTHING.
+  local dir f merged
+  dir=$(mktemp -d); f="$dir/settings.json"
+  printf '{}\n' > "$f"
+  merged=$( . "$ADOPT_LIB"; adopt_merged_settings_json "$f" )
+  # each event present with the right script in its command
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/session-start-context.sh"' \
+    "$(printf '%s' "$merged" | jq -r '.hooks.SessionStart[0].hooks[0].command')" \
+    "SessionStart command literal preserved"
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/pre-edit-guard.sh"' \
+    "$(printf '%s' "$merged" | jq -r '.hooks.PreToolUse[0].hooks[0].command')" \
+    "PreToolUse command literal preserved"
+  assert_eq 'Edit|Write' \
+    "$(printf '%s' "$merged" | jq -r '.hooks.PreToolUse[0].matcher')" \
+    "PreToolUse matcher is Edit|Write"
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/stop-orchestrator.sh"' \
+    "$(printf '%s' "$merged" | jq -r '.hooks.Stop[0].hooks[0].command')" \
+    "Stop command literal preserved"
+  # timeout 30 on each
+  assert_eq 30 "$(printf '%s' "$merged" | jq -r '.hooks.SessionStart[0].hooks[0].timeout')" "SessionStart timeout 30"
+  assert_eq 30 "$(printf '%s' "$merged" | jq -r '.hooks.PreToolUse[0].hooks[0].timeout')" "PreToolUse timeout 30"
+  assert_eq 30 "$(printf '%s' "$merged" | jq -r '.hooks.Stop[0].hooks[0].timeout')" "Stop timeout 30"
+  # the literal expansion survives serialization (not resolved to an abs path)
+  assert_contains "$merged" 'git rev-parse --show-toplevel' "merged JSON keeps the literal git rev-parse expansion"
+  # pure: source file untouched
+  assert_eq '{}' "$(cat "$f" | tr -d '[:space:]')" "source file untouched (no write)"
+  rm -rf "$dir"
+}
+
+test_adopt_merged_settings_idempotent_no_duplicate_entries() {
+  # PURE (jq) IDEMPOTENCY LOCK: feeding adopt_merged_settings_json its OWN prior
+  # output must NOT add a second copy of any of the three hook entries. After two
+  # merges each event must have exactly ONE group whose hook carries the workflow
+  # command, and the second merge's output must equal the first's (byte-for-byte
+  # via jq -S canonicalization). Kills an "always-append" mutant.
+  local dir f once twice n_ss n_pt n_st
+  dir=$(mktemp -d); f="$dir/settings.json"
+  printf '{}\n' > "$f"
+  once=$( . "$ADOPT_LIB"; adopt_merged_settings_json "$f" )
+  # feed the first result back in as the existing file
+  printf '%s\n' "$once" > "$f"
+  twice=$( . "$ADOPT_LIB"; adopt_merged_settings_json "$f" )
+  # count groups whose first hook command is the workflow command (must be 1 each)
+  n_ss=$(printf '%s' "$twice" | jq '[.hooks.SessionStart[] | select(.hooks[0].command | test("session-start-context.sh"))] | length')
+  n_pt=$(printf '%s' "$twice" | jq '[.hooks.PreToolUse[]  | select(.hooks[0].command | test("pre-edit-guard.sh"))]     | length')
+  n_st=$(printf '%s' "$twice" | jq '[.hooks.Stop[]        | select(.hooks[0].command | test("stop-orchestrator.sh"))]  | length')
+  assert_eq 1 "$n_ss" "SessionStart workflow entry not duplicated on rerun"
+  assert_eq 1 "$n_pt" "PreToolUse workflow entry not duplicated on rerun"
+  assert_eq 1 "$n_st" "Stop workflow entry not duplicated on rerun"
+  # second merge is a fixed point (canonical equality)
+  assert_eq "$(printf '%s' "$once" | jq -S .)" "$(printf '%s' "$twice" | jq -S .)" \
+    "merge is a fixed point (rerun output identical)"
+  rm -rf "$dir"
+}
+
+test_adopt_merged_settings_preserves_existing_keys_and_foreign_hooks() {
+  # PURE (jq) NON-DESTRUCTIVE LOCK: the target already has an unrelated top-level
+  # key (model) AND a pre-existing FOREIGN PreToolUse hook (a Bash matcher that is
+  # NOT ours). adopt_merged_settings_json must keep the model key, keep the
+  # foreign Bash hook, AND add our three workflow hooks alongside (PreToolUse now
+  # has BOTH the foreign Bash group and our Edit|Write group). Kills a "replace
+  # .hooks wholesale" mutant.
+  local dir f merged
+  dir=$(mktemp -d); f="$dir/settings.json"
+  cat > "$f" <<'EOF'
+{
+  "model": "opus",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash /custom/foreign-bash-guard.sh", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  merged=$( . "$ADOPT_LIB"; adopt_merged_settings_json "$f" )
+  # unrelated top-level key preserved
+  assert_eq "opus" "$(printf '%s' "$merged" | jq -r '.model')" "unrelated top-level key preserved"
+  # foreign Bash hook still present
+  assert_eq 1 "$(printf '%s' "$merged" | jq '[.hooks.PreToolUse[] | select(.matcher=="Bash")] | length')" \
+    "foreign Bash PreToolUse hook preserved"
+  assert_contains "$merged" "foreign-bash-guard.sh" "foreign hook command kept verbatim"
+  # our workflow Edit|Write hook added alongside (PreToolUse now has 2 groups)
+  assert_eq 2 "$(printf '%s' "$merged" | jq '.hooks.PreToolUse | length')" \
+    "PreToolUse has both the foreign group and our workflow group"
+  assert_eq 1 "$(printf '%s' "$merged" | jq '[.hooks.PreToolUse[] | select(.hooks[0].command | test("pre-edit-guard.sh"))] | length')" \
+    "our workflow Edit|Write hook added"
+  # SessionStart + Stop also wired
+  assert_contains "$merged" "session-start-context.sh" "SessionStart wired"
+  assert_contains "$merged" "stop-orchestrator.sh" "Stop wired"
+  rm -rf "$dir"
+}
+
+test_adopt_hooks_present_true_only_when_all_three_wired() {
+  # PURE (jq): adopt_hooks_present <file> returns 0 iff ALL THREE workflow hook
+  # commands are already wired in <file>; 1 otherwise (none, partial, missing
+  # file). The idempotency primitive the orchestrator uses to detect "already
+  # adopted -> no settings rewrite needed".
+  local dir all none partial gauge rc
+  dir=$(mktemp -d)
+  all="$dir/all.json"; none="$dir/none.json"; partial="$dir/partial.json"
+  # fully wired = the canonical merge output
+  ( . "$ADOPT_LIB"; printf '{}' | adopt_merged_settings_json /dev/stdin ) > "$all"
+  # none = unrelated settings, no hooks
+  printf '{"model":"opus"}\n' > "$none"
+  # partial = only SessionStart wired (Stop + PreToolUse missing)
+  printf '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"bash \\"$(git rev-parse --show-toplevel)/hooks/session-start-context.sh\\"","timeout":30}]}]}}\n' > "$partial"
+  rc=$( . "$ADOPT_LIB"; adopt_hooks_present "$all"; echo $? )
+  assert_eq 0 "$rc" "all three wired -> present (0)"
+  rc=$( . "$ADOPT_LIB"; adopt_hooks_present "$none"; echo $? )
+  assert_eq 1 "$rc" "no workflow hooks -> not present (1)"
+  rc=$( . "$ADOPT_LIB"; adopt_hooks_present "$partial"; echo $? )
+  assert_eq 1 "$rc" "partial (only SessionStart) -> not present (1)"
+  rc=$( . "$ADOPT_LIB"; adopt_hooks_present "$dir/nope.json"; echo $? )
+  assert_eq 1 "$rc" "missing file -> not present (1)"
+  rm -rf "$dir"
+}
+
+test_adopt_paste_block_lists_all_three_hooks_with_literal_command() {
+  # PURE (candidate (b) degrade): adopt_paste_block <file> prints a copy-pasteable
+  # block naming all THREE hook events with the literal $(git rev-parse ...)
+  # commands + timeout 30, tells where to paste, and a restore note. Used on the
+  # no-jq path — we never silently rewrite the target settings there.
+  local dir f out
+  dir=$(mktemp -d); f="$dir/.claude/settings.json"
+  out=$( . "$ADOPT_LIB"; adopt_paste_block "$f" )
+  assert_contains "$out" '"SessionStart"' "block names SessionStart"
+  assert_contains "$out" '"PreToolUse"' "block names PreToolUse"
+  assert_contains "$out" '"Stop"' "block names Stop"
+  assert_contains "$out" "session-start-context.sh" "block carries the SessionStart script"
+  assert_contains "$out" "pre-edit-guard.sh" "block carries the PreToolUse script"
+  assert_contains "$out" "stop-orchestrator.sh" "block carries the Stop script"
+  assert_contains "$out" 'git rev-parse --show-toplevel' "block keeps the literal git rev-parse expansion"
+  assert_contains "$out" '"Edit|Write"' "block carries the PreToolUse matcher"
+  assert_contains "$out" "$f" "block says which file to paste into"
+  assert_contains "$out" "restore" "block includes a restore instruction"
+  rm -rf "$dir"
+}
+
+test_copy_workflow_files_copies_hooks_tree_and_policy() {
+  # SIDE-EFFECT: copy_workflow_files <src-root> <target-root> must copy the WHOLE
+  # hooks/ tree (including hooks/lib/) and templates/policy.json from src into
+  # target at the matching locations. Use THIS repo as src and a fresh tmp target.
+  local target
+  target=$(mktemp -d)
+  ( . "$ADOPT_LIB"; copy_workflow_files "$REPO" "$target" )
+  assert_eq 0 "$?" "copy_workflow_files returns 0"
+  for f in hooks/pre-edit-guard.sh hooks/session-start-context.sh \
+           hooks/stop-orchestrator.sh hooks/lib/workflow-state.sh \
+           hooks/lib/write-handoff.sh templates/policy.json; do
+    if [ ! -f "$target/$f" ]; then
+      fail "expected $f copied into target"
+    fi
+  done
+  # content fidelity on a representative file
+  assert_eq "$(cat "$REPO/templates/policy.json")" "$(cat "$target/templates/policy.json")" \
+    "policy.json content copied verbatim"
+  rm -rf "$target"
+}
+
+test_adopt_repo_end_to_end_copies_files_and_wires_settings() {
+  # SIDE-EFFECT ORCHESTRATOR: adopt_repo <src> <target> on a git target must
+  # (1) copy the hooks tree + templates/policy.json, (2) create <target>/.claude/
+  # if missing, (3) merge the three workflow hooks into <target>/.claude/
+  # settings.json with the literal $(git rev-parse ...) commands preserved, while
+  # preserving any existing keys. Target is a fresh tmp git repo (never real FS).
+  local target s rc
+  target=$(make_target_repo)
+  # no .claude/ yet -> orchestrator must create it
+  if [ -d "$target/.claude" ]; then fail "fixture should start without .claude/"; fi
+  ( . "$ADOPT_LIB"; adopt_repo "$REPO" "$target" ) >/dev/null 2>&1
+  rc=$?
+  assert_eq 0 "$rc" "adopt_repo returns 0 on a git target"
+  # files copied
+  if [ ! -f "$target/hooks/pre-edit-guard.sh" ]; then fail "hooks copied"; fi
+  if [ ! -f "$target/hooks/lib/workflow-state.sh" ]; then fail "hooks/lib copied"; fi
+  if [ ! -f "$target/templates/policy.json" ]; then fail "policy.json copied"; fi
+  # .claude/ created and settings wired
+  s="$target/.claude/settings.json"
+  if [ ! -f "$s" ]; then fail "adopt_repo must create .claude/settings.json"; fi
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/session-start-context.sh"' \
+    "$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$s")" "SessionStart wired with literal command"
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/pre-edit-guard.sh"' \
+    "$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$s")" "PreToolUse wired with literal command"
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/stop-orchestrator.sh"' \
+    "$(jq -r '.hooks.Stop[0].hooks[0].command' "$s")" "Stop wired with literal command"
+  assert_contains "$(cat "$s")" 'git rev-parse --show-toplevel' "settings keeps literal git rev-parse (not resolved)"
+  rm -rf "$target"
+}
+
+test_adopt_repo_idempotent_rerun_no_duplicate_entries() {
+  # IDEMPOTENCY LOCK (end-to-end): running adopt_repo TWICE on the same target
+  # must NOT duplicate hook entries (each event still has exactly one workflow
+  # group) and the settings content must be byte-identical between the two runs.
+  # Also preserves a pre-existing unrelated top-level key across both runs.
+  local target s c1 c2
+  target=$(make_target_repo)
+  mkdir -p "$target/.claude"
+  printf '{"model":"opus"}\n' > "$target/.claude/settings.json"
+  s="$target/.claude/settings.json"
+  ( . "$ADOPT_LIB"; adopt_repo "$REPO" "$target" ) >/dev/null 2>&1
+  c1=$(cat "$s")
+  ( . "$ADOPT_LIB"; adopt_repo "$REPO" "$target" ) >/dev/null 2>&1
+  c2=$(cat "$s")
+  assert_eq "$c1" "$c2" "second adopt leaves settings byte-identical (idempotent)"
+  assert_eq 1 "$(jq '[.hooks.SessionStart[] | select(.hooks[0].command | test("session-start-context.sh"))] | length' "$s")" \
+    "SessionStart not duplicated across two adopts"
+  assert_eq 1 "$(jq '[.hooks.PreToolUse[] | select(.hooks[0].command | test("pre-edit-guard.sh"))] | length' "$s")" \
+    "PreToolUse not duplicated across two adopts"
+  assert_eq 1 "$(jq '[.hooks.Stop[] | select(.hooks[0].command | test("stop-orchestrator.sh"))] | length' "$s")" \
+    "Stop not duplicated across two adopts"
+  assert_eq "opus" "$(jq -r '.model' "$s")" "pre-existing key preserved across adopts"
+  rm -rf "$target"
+}
+
+test_install_sh_adopt_wires_target_repo() {
+  # END-TO-END (Mode B through install.sh): `install.sh --adopt <target>` must
+  # adopt the workflow guard into a fresh tmp git repo: (1) exit 0, (2) copy the
+  # hooks tree + templates/policy.json into the target, (3) wire the three
+  # workflow hooks into <target>/.claude/settings.json with the literal
+  # $(git rev-parse --show-toplevel) command preserved. --adopt is a VALUE arg
+  # (the next token is the target path). Runs under a masked PATH carrying the
+  # full core toolset plus git+jq; NEVER touches the real HOME / ~/.claude/.
+  local target bindir out rc s
+  target=$(make_target_repo)
+  bindir=$(mask_jq_bin)
+  ln -sf "$(command -v git)" "$bindir/git"
+  ln -sf "$(command -v jq)" "$bindir/jq"
+  ln -sf "$(command -v mkdir)" "$bindir/mkdir"  # adopt_repo creates dirs/.claude
+  out=$( PATH="$bindir" bash "$INSTALL_SH" --adopt "$target" 2>&1 ); rc=$?
+  assert_eq 0 "$rc" "install.sh --adopt returns 0 on a git target"
+  if [ ! -f "$target/hooks/pre-edit-guard.sh" ]; then fail "install.sh --adopt copies hooks"; fi
+  if [ ! -f "$target/templates/policy.json" ]; then fail "install.sh --adopt copies policy.json"; fi
+  s="$target/.claude/settings.json"
+  if [ ! -f "$s" ]; then fail "install.sh --adopt creates .claude/settings.json"; fi
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/session-start-context.sh"' \
+    "$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$s")" "SessionStart wired with literal command"
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/pre-edit-guard.sh"' \
+    "$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$s")" "PreToolUse wired with literal command"
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/stop-orchestrator.sh"' \
+    "$(jq -r '.hooks.Stop[0].hooks[0].command' "$s")" "Stop wired with literal command"
+  assert_contains "$(cat "$s")" 'git rev-parse --show-toplevel' "settings keeps literal git rev-parse (not resolved)"
+  rm -rf "$target" "$bindir"
+}
+
+test_install_sh_adopt_missing_path_errors() {
+  # GUARD: `--adopt` is a value arg; with NO path following it install.sh must
+  # fail loud (non-zero exit, error on stderr) and NOT proceed as if adopting.
+  local bindir out rc
+  bindir=$(mask_jq_bin)
+  ln -sf "$(command -v git)" "$bindir/git"
+  ln -sf "$(command -v jq)" "$bindir/jq"
+  out=$( PATH="$bindir" bash "$INSTALL_SH" --adopt 2>&1 ); rc=$?
+  if [ "$rc" -eq 0 ]; then fail "install.sh --adopt with no path must exit non-zero"; fi
+  assert_contains "$out" "--adopt" "error names the --adopt flag"
+  rm -rf "$bindir"
+}
+
+# --- Slice 4 (v3-007) helpers: interactive menu + --update -------------------
+
+MENU_LIB="$REPO/lib/menu.sh"
+
+# choice_modes <choice>  -> echoes the normalized mode token for a menu choice.
+choice_modes() {
+  ( . "$MENU_LIB"; menu_choice_to_modes "$1" )
+}
+
+# --- Slice 4 (v3-007) tests: lib/menu.sh pure dispatch -----------------------
+
+test_menu_choice_a_maps_to_mode_a() {
+  # PURE heart of the menu: a user choosing "a"/"A" (Mode A, machine-level) maps
+  # to the stable mode token `a`. This is the testable core, no tty / no file.
+  assert_eq "a" "$(choice_modes a)" "choice 'a' -> mode a"
+  assert_eq "a" "$(choice_modes A)" "choice 'A' -> mode a (case-insensitive)"
+}
+
+test_menu_choice_b_maps_to_mode_b() {
+  # "b"/"B" (Mode B, adopt into a project) maps to the stable token `b`.
+  assert_eq "b" "$(choice_modes b)" "choice 'b' -> mode b"
+  assert_eq "b" "$(choice_modes B)" "choice 'B' -> mode b (case-insensitive)"
+}
+
+test_menu_choice_both_maps_to_both() {
+  # "both"/"ab"/"c" (do both) maps to the stable token `both`.
+  assert_eq "both" "$(choice_modes both)" "choice 'both' -> both"
+  assert_eq "both" "$(choice_modes ab)" "choice 'ab' -> both"
+  assert_eq "both" "$(choice_modes c)" "choice 'c' -> both"
+}
+
+test_menu_choice_quit_or_unknown_maps_to_none() {
+  # quit / empty / anything unrecognized maps to `none` (conservative: do nothing,
+  # never accidentally run a mode on a stray keystroke). Kills a "default to a"
+  # mutant.
+  assert_eq "none" "$(choice_modes q)" "choice 'q' -> none"
+  assert_eq "none" "$(choice_modes quit)" "choice 'quit' -> none"
+  assert_eq "none" "$(choice_modes '')" "empty choice -> none"
+  assert_eq "none" "$(choice_modes zzz)" "unknown choice -> none"
+}
+
+# run_menu_pipe <stdin> <settings_file> <gauge> <src_root>  -> sets RC/OUT/ERR.
+#   Feeds <stdin> (the choice, plus a Mode-B target line when needed) into
+#   run_menu via a pipe (no tty -> exercises the stdin read branch). The Mode A
+#   target is the INJECTED settings fixture; the Mode B target is read from stdin.
+run_menu_pipe() {
+  local stdin_data="$1" settings="$2" gauge="$3" src="$4"
+  local out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  printf '%s' "$stdin_data" \
+    | ( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; . "$ADOPT_LIB"; \
+        run_menu "$settings" "$gauge" "$src" ) >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+test_run_menu_choice_a_dispatches_mode_a_only() {
+  # SIDE-EFFECT orchestrator: feeding "a" on stdin must dispatch Mode A
+  # (apply_statusline) against the INJECTED settings fixture (never ~/.claude/),
+  # writing the statusLine pointing at the gauge — and must NOT adopt any repo.
+  local dir f gauge
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high"}\n' > "$f"
+  run_menu_pipe 'a
+' "$f" "$gauge" "$REPO"
+  assert_eq 0 "$RC" "run_menu choice a returns 0"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "Mode A wired the statusLine"
+  assert_eq "high" "$(jq -r '.effortLevel' "$f")" "Mode A preserved the existing key"
+  rm -rf "$dir"
+}
+
+test_run_menu_choice_b_reads_target_and_adopts() {
+  # Feeding "b\n<target>\n" must dispatch Mode B (adopt_repo) into the target git
+  # repo read from stdin (a fresh tmp repo, never the real FS) and must NOT touch
+  # the injected settings fixture (Mode A must not run).
+  local dir f gauge target s
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high"}\n' > "$f"
+  target=$(make_target_repo)
+  run_menu_pipe "b
+$target
+" "$f" "$gauge" "$REPO"
+  assert_eq 0 "$RC" "run_menu choice b returns 0"
+  s="$target/.claude/settings.json"
+  if [ ! -f "$s" ]; then fail "Mode B must wire the target settings"; fi
+  assert_eq 'bash "$(git rev-parse --show-toplevel)/hooks/session-start-context.sh"' \
+    "$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$s")" "Mode B wired the target"
+  # Mode A must NOT have run: the injected fixture stays without a statusLine.
+  assert_eq "null" "$(jq -r '.statusLine // "null"' "$f")" "Mode A did not run on choice b"
+  rm -rf "$dir" "$target"
+}
+
+test_run_menu_choice_both_dispatches_a_and_b() {
+  # Feeding "both\n<target>\n" must run BOTH Mode A (against the injected fixture)
+  # and Mode B (adopt into the target read from stdin).
+  local dir f gauge target s
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{}\n' > "$f"
+  target=$(make_target_repo)
+  run_menu_pipe "both
+$target
+" "$f" "$gauge" "$REPO"
+  assert_eq 0 "$RC" "run_menu choice both returns 0"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "Mode A ran (statusLine wired)"
+  s="$target/.claude/settings.json"
+  if [ ! -f "$s" ]; then fail "Mode B must wire the target settings"; fi
+  assert_contains "$(cat "$s")" "session-start-context.sh" "Mode B ran (target wired)"
+  rm -rf "$dir" "$target"
+}
+
+test_run_menu_choice_quit_does_nothing() {
+  # Feeding "q" must dispatch NOTHING: the injected settings fixture stays
+  # untouched (no statusLine written) and exit is 0.
+  local dir f gauge before after
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high"}\n' > "$f"
+  before=$(cat "$f")
+  run_menu_pipe 'q
+' "$f" "$gauge" "$REPO"
+  assert_eq 0 "$RC" "run_menu quit returns 0"
+  after=$(cat "$f")
+  assert_eq "$before" "$after" "quit left the settings fixture untouched"
+  rm -rf "$dir"
+}
+
+test_install_sh_no_flags_menu_choice_a_wires_mode_a() {
+  # END-TO-END (interactive menu through install.sh): with NO mode flag, install.sh
+  # runs preflight then the menu. Feeding "a" on stdin must wire Mode A into the
+  # INJECTED SETTINGS_FILE fixture (never ~/.claude/). PATH carries the full core
+  # set + git + jq so preflight passes and the merge runs.
+  local dir f gauge bindir out rc
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high"}\n' > "$f"
+  bindir=$(mask_jq_bin)
+  ln -sf "$(command -v git)" "$bindir/git"
+  ln -sf "$(command -v jq)" "$bindir/jq"
+  out=$( printf 'a\n' | PATH="$bindir" SETTINGS_FILE="$f" bash "$INSTALL_SH" 2>&1 ); rc=$?
+  assert_eq 0 "$rc" "install.sh (no flags) + menu choice a returns 0"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "menu choice a wired statusLine via install.sh"
+  assert_eq "high" "$(jq -r '.effortLevel' "$f")" "existing key preserved"
+  rm -rf "$dir" "$bindir"
+}
+
+test_install_sh_auto_does_not_enter_menu() {
+  # --auto is non-interactive: it must NOT block on the menu. With --auto and NO
+  # mode flag and EMPTY stdin, install.sh must still exit 0 without hanging on a
+  # read and without dispatching a mode (the injected fixture stays untouched).
+  local dir f bindir out rc before after
+  dir=$(mktemp -d); f="$dir/settings.json"
+  printf '{"effortLevel":"high"}\n' > "$f"
+  before=$(cat "$f")
+  bindir=$(mask_jq_bin)
+  ln -sf "$(command -v git)" "$bindir/git"
+  ln -sf "$(command -v jq)" "$bindir/jq"
+  out=$( printf '' | PATH="$bindir" SETTINGS_FILE="$f" bash "$INSTALL_SH" --auto 2>&1 ); rc=$?
+  assert_eq 0 "$rc" "install.sh --auto returns 0 without entering the menu"
+  after=$(cat "$f")
+  assert_eq "$before" "$after" "--auto did not dispatch a mode (fixture untouched)"
+  rm -rf "$dir" "$bindir"
+}
+
+# --- Slice 4 (v3-007) tests: --update (pull/reapply separation) --------------
+
+test_update_pull_is_stubbable_via_env() {
+  # --update's git pull is a network side effect. update_pull must run the
+  # injected UPDATE_PULL_CMD (a harmless command here) INSTEAD of touching the
+  # network, so the pull step is observable in tests without a real pull.
+  local out
+  out=$( . "$MENU_LIB"; UPDATE_PULL_CMD='printf PULL_SENTINEL' update_pull "$REPO" )
+  assert_contains "$out" "PULL_SENTINEL" "update_pull runs the injected stub command"
+}
+
+test_do_update_pulls_then_reapplies_mode_a_idempotent() {
+  # do_update must (1) call the (stubbed) pull, then (2) idempotently re-apply
+  # Mode A against the INJECTED settings fixture. First run writes the statusLine;
+  # a SECOND do_update re-pulls (stub) and re-applies as a NO-OP (idempotent
+  # reapply — the update-is-safe-to-rerun guarantee). Never touches the network
+  # or ~/.claude/.
+  local dir f gauge out1 out2 c1 c2
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high"}\n' > "$f"
+  out1=$( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; \
+          UPDATE_PULL_CMD='printf PULL1' do_update "$REPO" "$f" "$gauge" )
+  assert_contains "$out1" "PULL1" "do_update calls the (stubbed) pull"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "do_update re-applied Mode A"
+  c1=$(cat "$f")
+  out2=$( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; \
+          UPDATE_PULL_CMD='printf PULL2' do_update "$REPO" "$f" "$gauge" )
+  c2=$(cat "$f")
+  assert_eq "$c1" "$c2" "do_update reapply is idempotent (no change on rerun)"
+  assert_contains "$out2" "no-op" "do_update rerun reports the idempotent no-op"
+  rm -rf "$dir"
+}
+
+test_do_update_prints_mode_b_hint() {
+  # Mode B target repos are not tracked (no registry). do_update must print a hint
+  # telling the user to update each adopted repo themselves (git pull + re-adopt),
+  # rather than silently doing nothing about Mode B.
+  local dir f gauge out
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{}\n' > "$f"
+  out=$( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; \
+         UPDATE_PULL_CMD='true' do_update "$REPO" "$f" "$gauge" )
+  assert_contains "$out" "--adopt" "Mode B hint tells user to re-run --adopt"
+  rm -rf "$dir"
+}
+
+test_install_sh_update_flag_reapplies_mode_a() {
+  # END-TO-END (--update through install.sh): with --update and the pull stubbed
+  # via UPDATE_PULL_CMD, install.sh must re-apply Mode A into the INJECTED
+  # SETTINGS_FILE fixture (never ~/.claude/) and exit 0. --update must NOT enter
+  # the interactive menu (it is an explicit mode).
+  local dir f gauge bindir out rc
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{"effortLevel":"high"}\n' > "$f"
+  bindir=$(mask_jq_bin)
+  ln -sf "$(command -v git)" "$bindir/git"
+  ln -sf "$(command -v jq)" "$bindir/jq"
+  ln -sf "$(command -v true)" "$bindir/true"
+  out=$( printf '' | PATH="$bindir" SETTINGS_FILE="$f" UPDATE_PULL_CMD='printf PULLED' \
+         bash "$INSTALL_SH" --update 2>&1 ); rc=$?
+  assert_eq 0 "$rc" "install.sh --update returns 0"
+  assert_contains "$out" "PULLED" "install.sh --update ran the (stubbed) pull"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "install.sh --update re-applied Mode A"
+  rm -rf "$dir" "$bindir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
+test_menu_choice_a_maps_to_mode_a
+test_menu_choice_b_maps_to_mode_b
+test_menu_choice_both_maps_to_both
+test_menu_choice_quit_or_unknown_maps_to_none
+test_run_menu_choice_a_dispatches_mode_a_only
+test_run_menu_choice_b_reads_target_and_adopts
+test_run_menu_choice_both_dispatches_a_and_b
+test_run_menu_choice_quit_does_nothing
+test_install_sh_no_flags_menu_choice_a_wires_mode_a
+test_install_sh_auto_does_not_enter_menu
+test_update_pull_is_stubbable_via_env
+test_do_update_pulls_then_reapplies_mode_a_idempotent
+test_do_update_prints_mode_b_hint
+test_install_sh_update_flag_reapplies_mode_a
+test_adopt_hook_command_preserves_git_rev_parse_literal
+test_adopt_merged_settings_wires_three_hooks_with_literal_command
+test_adopt_merged_settings_idempotent_no_duplicate_entries
+test_adopt_merged_settings_preserves_existing_keys_and_foreign_hooks
+test_adopt_hooks_present_true_only_when_all_three_wired
+test_adopt_paste_block_lists_all_three_hooks_with_literal_command
+test_copy_workflow_files_copies_hooks_tree_and_policy
+test_adopt_repo_end_to_end_copies_files_and_wires_settings
+test_adopt_repo_idempotent_rerun_no_duplicate_entries
+test_install_sh_adopt_wires_target_repo
+test_install_sh_adopt_missing_path_errors
+test_statusline_command_points_at_local_clone_gauge
+test_merged_settings_preserves_other_keys_and_sets_statusline
+test_merged_settings_replaces_old_statusline_and_keeps_others
+test_statusline_matches_true_when_identical_false_otherwise
+test_settings_is_valid_json_true_for_good_empty_missing_false_for_broken
+test_apply_statusline_clean_creates_then_noop_on_rerun
+test_apply_statusline_otherkeys_backs_up_preserves_then_noop
+test_apply_statusline_old_different_updates_then_noop
+test_apply_statusline_broken_json_does_not_clobber_backs_up_and_degrades
+test_apply_statusline_no_jq_degrades_prints_block_and_does_not_write
+test_install_sh_mode_a_writes_statusline_to_injected_settings_file
+test_install_cmd_for_brew_jq
+test_install_cmd_for_apt_jq
+test_install_cmd_for_all_managers_jq
+test_install_cmd_for_unknown_returns_1
+test_detect_pkg_manager_picks_brew_when_only_brew
+test_detect_pkg_manager_precedence_brew_over_apt
+test_detect_pkg_manager_apt_when_no_brew
+test_detect_pkg_manager_none_returns_1
+test_dep_present_true_for_existing
+test_dep_present_false_for_missing
+test_dep_tier_git_required_jq_optional_claude_detectonly
+test_dep_tier_unknown_defaults_optional
+test_should_install_auto_always_yes
+test_should_install_interactive_y_yes
+test_should_install_interactive_n_or_empty_no
+test_preflight_report_marks_present_and_missing_with_tier
+test_preflight_report_is_pure_no_writes
+test_missing_git_prints_official_link_and_stops
+test_missing_required_no_pkgmgr_prints_link_stops
+test_missing_optional_jq_does_not_block
+test_claude_code_detect_only_never_installs
+test_run_install_executes_only_when_gated_yes
+test_install_cmd_contains_sudo_for_apt_explicit_escalation
 test_policy_get_jq_reads_existing_key
 test_policy_get_jq_missing_key_returns_default
 test_policy_get_no_file_returns_default
