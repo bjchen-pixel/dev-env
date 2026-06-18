@@ -18,8 +18,22 @@ LIB_DIR=$(cd "$(dirname "$0")" && pwd -P)/lib
 
 DIR="$ROOT/.claude/ledger"
 
+# _open_questions_of <file> -> emits this entry's open_questions list items.
+_open_questions_of() {
+  awk '
+    /^open_questions:[ \t]*$/ { inblk=1; next }
+    inblk && /^[^ \t]/ { inblk=0 }
+    inblk && /^[ \t]*-[ \t]*/ {
+      v=$0; sub(/^[ \t]*-[ \t]*/, "", v); sub(/[ \t]+$/, "", v)
+      if (length(v)>0) print v
+    }
+  ' "$1"
+}
+
 # Active ids only — superseded decisions are intentionally omitted.
 ACTIVE=$(ledger_active_ids "$ROOT")
+
+OQ_ALL=""
 
 for id in $ACTIVE; do
   file="$DIR/$id.yaml"
@@ -43,6 +57,20 @@ for id in $ACTIVE; do
       printf "    why: %s\n", v
     }
   ' "$file"
+
+  oq=$(_open_questions_of "$file")
+  if [ -n "$oq" ]; then
+    OQ_ALL="$OQ_ALL
+$oq"
+  fi
 done
+
+# Aggregated open questions across all active decisions.
+if [ -n "$(printf '%s' "$OQ_ALL" | grep -v '^[ \t]*$')" ]; then
+  printf '\n## Open questions\n'
+  printf '%s\n' "$OQ_ALL" | grep -v '^[ \t]*$' | while IFS= read -r q; do
+    printf -- '- %s\n' "$q"
+  done
+fi
 
 exit 0

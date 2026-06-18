@@ -2712,6 +2712,41 @@ evidence:
   rm -rf "$dir"
 }
 
+test_resume_includes_claim_and_aggregated_open_questions() {
+  # Output must carry each active decision's claim, and aggregate open_questions
+  # across active decisions. Two active entries each contribute one question;
+  # both must appear.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: CLAIM_ALPHA
+status: active
+rejected:
+  - option: opt-a
+    why: why-a
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+open_questions:
+  - OQ_TOKEN_WINDOW unresolved'
+  write_raw_entry "$dir" "DATA-007" 'claim: CLAIM_BETA
+status: active
+rejected:
+  - option: opt-b
+    why: why-b
+supersedes: []
+evidence:
+  commits: [b22b22b]
+open_questions:
+  - OQ_RETENTION unresolved'
+  run_resume "$dir"
+  assert_eq 0 "$RC" "reader exits 0"
+  assert_contains "$OUT" "CLAIM_ALPHA" "claim of first active decision shown"
+  assert_contains "$OUT" "CLAIM_BETA" "claim of second active decision shown"
+  assert_contains "$OUT" "OQ_TOKEN_WINDOW" "open question from first decision aggregated"
+  assert_contains "$OUT" "OQ_RETENTION" "open question from second decision aggregated"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2843,6 +2878,7 @@ test_active_set_resolves_supersession_chain
 test_active_set_ignores_manual_superseded_by_field
 test_active_set_ignores_stored_status_field
 test_resume_output_includes_rejected_option_and_why
+test_resume_includes_claim_and_aggregated_open_questions
 "
 
 for t in $TESTS; do
