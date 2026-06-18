@@ -1,0 +1,17 @@
+id: LEDGER-003
+date: 2026-06-18
+status: active
+claim: 衝突偵測(conflict / scope-conflict)只輸出 flag「review required」,回傳是 SIGNAL 不是 veto;唯有甲方能宣布決策失效或被取代
+rejected:
+  - option: 偵測到衝突時讓 AI 自動 declare invalid / 自動 supersede
+    why: 憲法級——甲方保留逃生閥;AI 自動失效化正是本系統要防的 drift 本身
+supersedes: []
+evidence:
+  commits: [8584e2e, 3a98e31]
+verification:
+  - bash tests/run.sh
+open_questions:
+  - scope-conflict 目前以「共用 evidence.files」為觸發,分不清「地基層正交共治同一檔」與「真衝突」;本批因此先省略 files(決策 A)。這是繞過不是解法,待讓檢查能辨識正交共治。
+note: |
+  approval: 甲方 2026-06-18 審閱後核准,並於同次討論裁定 files 採 A(省略)以避假警報。
+  入帳理由:憲法線,AI 永遠只能 flag 不能宣判。此筆同時掛上 dogfood 驗出的 scope-conflict 設計弱點。

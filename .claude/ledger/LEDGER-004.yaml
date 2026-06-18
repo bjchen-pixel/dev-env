@@ -1,0 +1,16 @@
+id: LEDGER-004
+date: 2026-06-18
+status: active
+claim: ledger_add 結構性拒絕任何不帶 approval: 行的入帳(Human Gate 是結構性的,不是禮貌性的)
+rejected:
+  - option: gate 只當慣例/禮貌,信任 AI 自覺詢問
+    why: 沒牙的 gate 等於沒 gate;Claude 起草、人帶一句理由核准才落盤,否則不入帳
+supersedes: []
+evidence:
+  commits: [2c9ed08]
+verification:
+  - bash tests/run.sh
+open_questions: []
+note: |
+  approval: 甲方 2026-06-18 審閱後核准。
+  入帳理由:這筆決策正在被它自己執行——本批 5 筆都因帶 approval 行才得以落盤。

@@ -1,0 +1,16 @@
+id: LEDGER-005
+date: 2026-06-18
+status: active
+claim: 否定面是一等公民,每筆必記 rejected.option+why;Resume 輸出否定面+open_questions,不 dump 全決策、不帶 confidence score
+rejected:
+  - option: confidence score / decision-list dump
+    why: score 是假精度(LLM 生不出校準信心值);沒 why 的裸約束三週後自己也會重新推理
+supersedes: []
+evidence:
+  commits: [4a5037e, aa0bbc6]
+verification:
+  - bash tests/run.sh
+open_questions: []
+note: |
+  approval: 甲方 2026-06-18 審閱後核准。
+  入帳理由:這是整個 v3-008 存在的理由——治 Decision Drift 靠的是把否定面帶回來。

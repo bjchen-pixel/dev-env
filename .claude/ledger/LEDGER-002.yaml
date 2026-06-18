@@ -1,0 +1,16 @@
+id: LEDGER-002
+date: 2026-06-18
+status: active
+claim: 取代關係只存單向(新檔 supersedes:);active-set 由反掃 supersedes edge 動態算,顯式 status/superseded_by 一律忽略
+rejected:
+  - option: 把 superseded_by 物化寫回舊檔
+    why: 寫回舊檔即違反 append-only;決策數 <50 全掃是 microseconds,不值得用物化反向邊換正確性風險
+supersedes: []
+evidence:
+  commits: [2d5d84d]
+verification:
+  - bash tests/run.sh
+open_questions: []
+note: |
+  approval: 甲方 2026-06-18 審閱後核准。
+  入帳理由:這是 append-only 不被偷偷違反的結構保證,drift 防線命脈。

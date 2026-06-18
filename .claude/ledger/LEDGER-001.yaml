@@ -1,0 +1,16 @@
+id: LEDGER-001
+date: 2026-06-18
+status: active
+claim: Ledger 入帳即 immutable,一決策一檔 .claude/ledger/<id>.yaml;推翻=寫新檔 supersedes
+rejected:
+  - option: 單一 append-only 檔 / 原地可改
+    why: AI 最愛改歷史,但工程決策的價值在「當初為何那樣想」,原地改寫直接毀掉它
+supersedes: []
+evidence:
+  commits: [0efd240, 2fce4c9]
+verification:
+  - bash tests/run.sh
+open_questions: []
+note: |
+  approval: 甲方 2026-06-18 審閱後核准,為 v3-008 dogfood 入帳第一批地基決策。
+  入帳理由:這是儲存層的憲法,影響未來所有 ledger 操作。
