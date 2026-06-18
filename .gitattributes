@@ -1,0 +1,9 @@
+# Keep shell scripts LF on every platform. Git for Windows defaults to
+# core.autocrlf=true and would otherwise check these out with CRLF, which
+# breaks the shebang under Git Bash (bash looks for `bash\r`) and silently
+# disables every hook. See v3-007 (Windows deploy) + Claude Code hooks docs:
+# on Windows hook commands run under Git Bash, so .sh files MUST be LF.
+*.sh text eol=lf
+
+# The plan-gate marker and policy are read by bash; keep them LF too.
+*.json text eol=lf
