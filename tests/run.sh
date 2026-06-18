@@ -2612,6 +2612,21 @@ test_active_set_excludes_superseded() {
   rm -rf "$dir"
 }
 
+test_active_set_resolves_supersession_chain() {
+  # Chain 001 <- 002 <- 003: only 003 survives. 001 superseded by 002, 002
+  # superseded by 003. Active set = {003} alone.
+  local dir out
+  dir=$(mktemp -d)
+  seed_entry "$dir" "AUTH-001" "v1" ""
+  seed_entry "$dir" "AUTH-002" "v2" "AUTH-001"
+  seed_entry "$dir" "AUTH-003" "v3" "AUTH-002"
+  out=$(active_ids "$dir")
+  assert_contains "$out" "AUTH-003" "tip of chain (003) is active"
+  assert_not_contains "$out" "AUTH-002" "002 superseded by 003"
+  assert_not_contains "$out" "AUTH-001" "001 superseded by 002"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2739,6 +2754,7 @@ test_ledger_add_missing_approval_reason_rejected
 test_ledger_add_path_traversal_id_rejected
 test_ledger_add_never_mutates_existing_file
 test_active_set_excludes_superseded
+test_active_set_resolves_supersession_chain
 "
 
 for t in $TESTS; do
