@@ -2890,6 +2890,48 @@ test_crown_cold_process_recovers_negative_space() {
   rm -rf "$dir"
 }
 
+# --- Slice 2a/2b: ledger_check_conflict --------------------------------------
+
+# call_check_conflict <dir> <draft_body>
+#   Sources the lib in <dir> and pipes <draft_body> on stdin into
+#   ledger_check_conflict (root defaults to pwd -P). Sets RC / OUT / ERR.
+call_check_conflict() {
+  local dir="$1" body="$2"
+  local out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  printf '%s\n' "$body" \
+    | ( cd "$dir" && . "$LEDGER_LIB" && ledger_check_conflict ) >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+test_conflict_flags_reproposed_rejected_option() {
+  # DRIFT SCENARIO (the soul): AUTH-001 (active) rejected "JWT + Refresh Token"
+  # because internal-only. A cold-started draft re-proposes exactly that as its
+  # claim. ledger_check_conflict must FLAG: stdout names the rejecter id, the
+  # "review required" signal, and the recorded why; return code is non-zero.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度系統僅內部使用
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  call_check_conflict "$dir" 'claim: JWT + Refresh Token
+evidence:
+  commits: [z99z99z]'
+  if [ "$RC" -eq 0 ]; then
+    fail "re-proposing a rejected option must flag review-required (non-zero rc)"
+  fi
+  assert_contains "$OUT" "AUTH-001" "flag names the decision that rejected the option"
+  assert_contains "$OUT" "review required" "flag carries the review-required signal"
+  assert_contains "$OUT" "增加複雜度系統僅內部使用" "flag carries the recorded why"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3028,6 +3070,7 @@ test_resume_has_no_score
 test_resume_displays_computed_status_not_stored
 test_resume_empty_or_absent_ledger_exits_0
 test_crown_cold_process_recovers_negative_space
+test_conflict_flags_reproposed_rejected_option
 "
 
 for t in $TESTS; do

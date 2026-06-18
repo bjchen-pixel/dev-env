@@ -102,6 +102,88 @@ ledger_add() {
   return 0
 }
 
+# _ledger_rejected_of <file>
+#   Emits this entry's rejected items, one per line, as "option\twhy" (tab-sep).
+#   Reuses the rejected-block awk pattern from ledger-resume.sh (list of maps:
+#   "  - option: X" then "    why: Y"). why may be empty.
+_ledger_rejected_of() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  awk '
+    function flush() {
+      if (have_opt) { printf "%s\t%s\n", opt, why; have_opt=0; opt=""; why="" }
+    }
+    /^rejected:[ \t]*$/ { inrej=1; next }
+    inrej && /^[^ \t]/ { flush(); inrej=0 }
+    inrej && /^[ \t]*-?[ \t]*option:[ \t]*/ {
+      flush()
+      v=$0; sub(/^[ \t]*-?[ \t]*option:[ \t]*/, "", v); sub(/[ \t]+$/, "", v)
+      opt=v; have_opt=1; next
+    }
+    inrej && /^[ \t]*why:[ \t]*/ {
+      v=$0; sub(/^[ \t]*why:[ \t]*/, "", v); sub(/[ \t]+$/, "", v)
+      why=v
+    }
+    END { flush() }
+  ' "$file"
+}
+
+# _ledger_norm <string>
+#   Conservative normalization for conflict matching: trim, lowercase, collapse
+#   internal whitespace runs to a single space. bash 3.2: lowercasing via tr
+#   (NOT ${var^^}). Deliberately loose — false positives are cheap, a missed
+#   drift is the expensive failure we exist to prevent.
+_ledger_norm() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | awk '{ $1=$1; print }'
+}
+
+# ledger_check_conflict [root]   (draft entry body on stdin)
+#   Read-only drift check. Reads a draft YAML body on stdin and scans every
+#   ACTIVE decision's rejected options. If the draft's claim re-proposes an
+#   option that an active decision previously rejected (loose, bidirectional
+#   substring match on normalized text), prints a "review required" flag line to
+#   stdout naming the rejecter id and its recorded why — one line per hit.
+#   Returns 0 when there is no conflict, non-zero (a review-required SIGNAL, not
+#   a veto) when at least one hit is found. Writes nothing, mutates nothing.
+#   $1 (optional) = repo root (defaults to pwd -P).
+ledger_check_conflict() {
+  local root="${1:-$(pwd -P)}"
+  local dir="$root/.claude/ledger"
+  local body
+  body=$(cat)
+
+  local claim claim_n
+  claim=$(_yaml_scalar "$body" claim)
+  [ -n "$claim" ] || return 0
+  claim_n=$(_ledger_norm "$claim")
+
+  local hit=0 id
+  for id in $(ledger_active_ids "$root"); do
+    local file="$dir/$id.yaml"
+    [ -f "$file" ] || continue
+    local line opt why opt_n
+    while IFS=$'\t' read -r opt why; do
+      [ -n "$opt" ] || continue
+      opt_n=$(_ledger_norm "$opt")
+      case "$claim_n" in *"$opt_n"*)
+        printf '[ledger] review required: %s previously rejected this option — why: %s\n' "$id" "$why"
+        hit=1
+        continue ;;
+      esac
+      case "$opt_n" in *"$claim_n"*)
+        printf '[ledger] review required: %s previously rejected this option — why: %s\n' "$id" "$why"
+        hit=1 ;;
+      esac
+    done <<EOF
+$(_ledger_rejected_of "$file")
+EOF
+  done
+
+  [ "$hit" -eq 0 ]
+}
+
 # _ledger_entry_ids <ledger_dir>
 #   Emits the id (basename without .yaml) of every entry file, one per line.
 #   Empty output if the directory is absent. Uses a glob, not `ls` parsing.
