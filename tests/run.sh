@@ -2858,6 +2858,38 @@ test_resume_empty_or_absent_ledger_exits_0() {
   rm -rf "$dir"
 }
 
+test_crown_cold_process_recovers_negative_space() {
+  # CROWN: prove "不忘". ledger_add a complete decision (claim JWT only;
+  # rejected JWT+Refresh Token because internal-only; one open question), then a
+  # BRAND-NEW child process (cd into the repo, run ledger-resume.sh) recovers the
+  # negative space: claim + the rejected option + WHY + the open question. This
+  # models "three weeks later, cold start" via a fresh process with zero prior
+  # context.
+  local dir
+  dir=$(mktemp -d)
+  {
+    printf 'date: 2026-06-18\n'
+    printf 'claim: JWT only\n'
+    printf 'rejected:\n  - option: JWT+Refresh Token\n    why: 系統僅內部使用\n'
+    printf 'supersedes: []\n'
+    printf 'evidence:\n  commits: [a31f8f2]\n'
+    printf 'verification:\n  - npm test auth/*\n'
+    printf 'open_questions:\n  - token 過期窗口是否需縮短\n'
+    printf 'note: |\n  approval: 影響未來所有 auth 設計\n'
+  } | ( cd "$dir" && . "$LEDGER_LIB" && ledger_add "AUTH-001" )
+  assert_eq 0 "$?" "crown: ledger_add succeeds"
+
+  # fully cold child process — no sourced libs in scope, just the executable.
+  local OUT
+  OUT=$( cd "$dir" && bash "$REPO/hooks/ledger-resume.sh" )
+
+  assert_contains "$OUT" "JWT only" "crown: claim recovered"
+  assert_contains "$OUT" "JWT+Refresh Token" "crown: rejected option recovered"
+  assert_contains "$OUT" "系統僅內部使用" "crown: rejection why recovered"
+  assert_contains "$OUT" "token 過期窗口是否需縮短" "crown: open question recovered"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2995,6 +3027,7 @@ test_resume_not_full_dump
 test_resume_has_no_score
 test_resume_displays_computed_status_not_stored
 test_resume_empty_or_absent_ledger_exits_0
+test_crown_cold_process_recovers_negative_space
 "
 
 for t in $TESTS; do
