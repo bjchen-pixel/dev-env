@@ -3018,6 +3018,35 @@ evidence:
   rm -rf "$dir"
 }
 
+test_conflict_is_read_only_no_mutation() {
+  # CONSTITUTION LOCK 2: ledger_check_conflict is strictly read-only. After a
+  # run (that DOES flag), the ledger directory must be byte-for-byte identical
+  # (same file set, same content hashes) and the output must NOT contain the
+  # word "invalid" (flag != verdict; check has no power to declare anything bad).
+  local dir before after
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  # snapshot: each file path + its content hash, sorted.
+  before=$( cd "$(ledger_dir "$dir")" && for f in *; do printf '%s %s\n' "$f" "$(git hash-object "$f")"; done | sort )
+  call_check_conflict "$dir" 'claim: JWT + Refresh Token
+evidence:
+  commits: [z99z99z]'
+  # it must have flagged (so we are proving read-only on the path that fires).
+  assert_contains "$OUT" "review required" "precondition: this run actually flags"
+  after=$( cd "$(ledger_dir "$dir")" && for f in *; do printf '%s %s\n' "$f" "$(git hash-object "$f")"; done | sort )
+  assert_eq "$before" "$after" "ledger directory is byte-for-byte unchanged after check"
+  assert_not_contains "$OUT" "invalid" "output must never declare anything invalid (flag != verdict)"
+  assert_not_contains "$ERR" "invalid" "stderr must never declare anything invalid"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3160,6 +3189,7 @@ test_conflict_flags_reproposed_rejected_option
 test_conflict_no_match_returns_0_silent
 test_conflict_loose_match_case_and_whitespace
 test_conflict_only_triggers_on_active_rejecter
+test_conflict_is_read_only_no_mutation
 "
 
 for t in $TESTS; do
