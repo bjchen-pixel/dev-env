@@ -2397,6 +2397,116 @@ test_ledger_add_valid_entry_writes_file() {
   rm -rf "$dir"
 }
 
+test_ledger_add_duplicate_id_rejected() {
+  # Append-only: a second ledger_add for an id whose file already exists must be
+  # rejected (non-zero), with an explanatory message on stderr.
+  local dir
+  dir=$(mktemp -d)
+  call_ledger_add "$dir" "AUTH-001" write_valid_entry_stdin
+  assert_eq 0 "$RC" "first add of AUTH-001 succeeds"
+  call_ledger_add "$dir" "AUTH-001" write_valid_entry_stdin
+  if [ "$RC" -eq 0 ]; then
+    fail "second add of AUTH-001 must be rejected (append-only)"
+  fi
+  assert_contains "$ERR" "AUTH-001" "rejection names the duplicate id"
+  rm -rf "$dir"
+}
+
+# entry bodies missing a single required field (everything else valid).
+write_entry_no_claim() {
+  cat <<'EOF'
+date: 2026-06-18
+rejected:
+  - option: JWT + Refresh Token
+    why: 系統僅內部使用
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+verification:
+  - npm test auth/*
+note: |
+  approval: 影響未來所有 auth 設計
+EOF
+}
+
+write_entry_no_evidence_commits() {
+  cat <<'EOF'
+date: 2026-06-18
+claim: JWT only
+rejected:
+  - option: JWT + Refresh Token
+    why: 系統僅內部使用
+supersedes: []
+verification:
+  - npm test auth/*
+note: |
+  approval: 影響未來所有 auth 設計
+EOF
+}
+
+write_entry_no_approval() {
+  cat <<'EOF'
+date: 2026-06-18
+claim: JWT only
+rejected:
+  - option: JWT + Refresh Token
+    why: 系統僅內部使用
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+verification:
+  - npm test auth/*
+EOF
+}
+
+test_ledger_add_missing_evidence_commits_rejected() {
+  # falsifiable: evidence.commits must be present & non-empty. An entry whose
+  # evidence block has no commits is rejected, nothing written.
+  local dir
+  dir=$(mktemp -d)
+  call_ledger_add "$dir" "AUTH-001" write_entry_no_evidence_commits
+  if [ "$RC" -eq 0 ]; then
+    fail "entry missing evidence.commits must be rejected"
+  fi
+  if [ -e "$(ledger_dir "$dir")/AUTH-001.yaml" ]; then
+    fail "rejected entry must NOT leave a file behind"
+  fi
+  assert_contains "$ERR" "commits" "rejection mentions evidence commits"
+  rm -rf "$dir"
+}
+
+test_ledger_add_missing_approval_reason_rejected() {
+  # Human Gate is structural: an entry with no approval reason (no note carrying
+  # an approval line) is rejected.
+  local dir
+  dir=$(mktemp -d)
+  call_ledger_add "$dir" "AUTH-001" write_entry_no_approval
+  if [ "$RC" -eq 0 ]; then
+    fail "entry without an approval reason must be rejected (Human Gate)"
+  fi
+  if [ -e "$(ledger_dir "$dir")/AUTH-001.yaml" ]; then
+    fail "rejected entry must NOT leave a file behind"
+  fi
+  assert_contains "$ERR" "approval" "rejection mentions the missing approval reason"
+  rm -rf "$dir"
+}
+
+test_ledger_add_missing_claim_rejected() {
+  # An entry without a `claim:` line is invalid -> rejected, no file written,
+  # stderr explains claim is required.
+  local dir
+  dir=$(mktemp -d)
+  call_ledger_add "$dir" "AUTH-001" write_entry_no_claim
+  if [ "$RC" -eq 0 ]; then
+    fail "entry missing claim must be rejected"
+  fi
+  if [ -e "$(ledger_dir "$dir")/AUTH-001.yaml" ]; then
+    fail "rejected entry must NOT leave a file behind"
+  fi
+  assert_contains "$ERR" "claim" "rejection mentions the missing claim field"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2517,6 +2627,10 @@ test_session_start_disclaimer_present_when_only_current_task
 test_session_start_disclaimer_soul_substrings_locked
 test_settings_wires_session_start_and_preserves_pretooluse_stop
 test_ledger_add_valid_entry_writes_file
+test_ledger_add_duplicate_id_rejected
+test_ledger_add_missing_claim_rejected
+test_ledger_add_missing_evidence_commits_rejected
+test_ledger_add_missing_approval_reason_rejected
 "
 
 for t in $TESTS; do
