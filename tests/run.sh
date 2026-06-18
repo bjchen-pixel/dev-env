@@ -2817,6 +2817,47 @@ evidence:
   rm -rf "$dir"
 }
 
+test_resume_displays_computed_status_not_stored() {
+  # status display MUST: the Reader shows the COMPUTED status, never the stored
+  # line. Forge AUTH-001 active (no real supersede) but with a stale stored
+  # `status: superseded`. The Reader must display it as active. If it echoed the
+  # stored line, the output would call this active decision superseded.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: REALLY_ACTIVE_CLAIM
+status: superseded
+rejected:
+  - option: opt
+    why: why
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  run_resume "$dir"
+  assert_eq 0 "$RC" "reader exits 0"
+  assert_contains "$OUT" "REALLY_ACTIVE_CLAIM" "the (really active) decision is shown"
+  assert_contains "$OUT" "active" "displayed status is the computed active"
+  assert_not_contains "$OUT" "superseded" "stored status:superseded line is NOT echoed"
+  rm -rf "$dir"
+}
+
+test_resume_empty_or_absent_ledger_exits_0() {
+  # graceful MUST: with NO .claude/ledger/ at all, the Reader exits 0, prints
+  # nothing, and leaks ZERO stderr. Same for an existing-but-empty ledger dir.
+  local dir
+  dir=$(mktemp -d)              # bare dir, no .claude/ledger
+  run_resume "$dir"
+  assert_eq 0 "$RC" "absent ledger -> exit 0"
+  assert_eq "" "$OUT" "absent ledger -> empty stdout"
+  assert_eq "" "$ERR" "absent ledger -> zero stderr"
+  # now an empty ledger directory
+  mkdir -p "$dir/.claude/ledger"
+  run_resume "$dir"
+  assert_eq 0 "$RC" "empty ledger -> exit 0"
+  assert_eq "" "$OUT" "empty ledger -> empty stdout"
+  assert_eq "" "$ERR" "empty ledger -> zero stderr"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2952,6 +2993,8 @@ test_resume_includes_claim_and_aggregated_open_questions
 test_resume_omits_superseded_claims
 test_resume_not_full_dump
 test_resume_has_no_score
+test_resume_displays_computed_status_not_stored
+test_resume_empty_or_absent_ledger_exits_0
 "
 
 for t in $TESTS; do

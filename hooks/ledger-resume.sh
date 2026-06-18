@@ -40,7 +40,10 @@ for id in $ACTIVE; do
   [ -f "$file" ] || continue
 
   claim=$(_yaml_scalar "$(cat "$file")" claim)
-  printf '## %s — %s\n' "$id" "$claim"
+  # Displayed status is COMPUTED, not read from the file: every id we iterate is
+  # in the active set (ledger_active_ids), so its computed status is "active".
+  # The stored `status:` line is never echoed.
+  printf '## %s [active] — %s\n' "$id" "$claim"
 
   # Rejected options + why (the negative space). Supports multiple rejected
   # entries (list of maps). Each: "  - option: X" then "    why: Y".
