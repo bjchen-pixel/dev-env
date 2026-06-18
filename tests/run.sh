@@ -2683,6 +2683,35 @@ evidence:
   rm -rf "$dir"
 }
 
+# run_resume <dir> -> sets RC / OUT / ERR by running the Reader inside <dir>.
+run_resume() {
+  local dir="$1" out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  ( cd "$dir" && bash "$LEDGER_RESUME" ) >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+test_resume_output_includes_rejected_option_and_why() {
+  # The Reader's whole point is surfacing the negative space. For an active
+  # decision, the output must carry BOTH the rejected option string AND its why.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 系統僅內部使用增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  run_resume "$dir"
+  assert_eq 0 "$RC" "reader exits 0"
+  assert_contains "$OUT" "JWT + Refresh Token" "output carries the rejected option"
+  assert_contains "$OUT" "系統僅內部使用增加複雜度" "output carries the rejection why"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2813,6 +2842,7 @@ test_active_set_excludes_superseded
 test_active_set_resolves_supersession_chain
 test_active_set_ignores_manual_superseded_by_field
 test_active_set_ignores_stored_status_field
+test_resume_output_includes_rejected_option_and_why
 "
 
 for t in $TESTS; do
