@@ -3047,6 +3047,57 @@ evidence:
   rm -rf "$dir"
 }
 
+# write_reproposing_entry_stdin
+#   A fully-valid entry whose claim re-proposes AUTH-001's rejected option
+#   ("JWT + Refresh Token"). ledger_check_conflict would flag it — but ledger_add
+#   must NEVER consult the check, so this still persists.
+write_reproposing_entry_stdin() {
+  cat <<'EOF'
+date: 2026-06-20
+claim: JWT + Refresh Token
+rejected:
+  - option: opaque session cookies
+    why: 不適合無狀態服務
+supersedes: []
+evidence:
+  commits: [c33c33c]
+verification:
+  - npm test auth/*
+note: |
+  approval: 甲方 override，明知與 AUTH-001 衝突仍決定採用
+EOF
+}
+
+test_add_still_persists_reproposed_rejected_option() {
+  # CONSTITUTION LOCK 1 (the soul of 2b): flag != block. ledger_add MUST NOT call
+  # ledger_check_conflict. Seed AUTH-001 (rejects "JWT + Refresh Token"); then
+  # ledger_add a NEW decision AUTH-009 whose claim re-proposes exactly that. The
+  # add MUST succeed (rc 0) and the file MUST land on disk. The escape valve is
+  # structural: there is no code path by which a conflict can block an entry.
+  local dir f
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  # prove the draft WOULD be flagged (so the add path is genuinely conflicting).
+  call_check_conflict "$dir" "$(write_reproposing_entry_stdin)"
+  assert_contains "$OUT" "review required" "precondition: the entry is genuinely conflicting"
+  # ...yet ledger_add persists it regardless.
+  call_ledger_add "$dir" "AUTH-009" write_reproposing_entry_stdin
+  assert_eq 0 "$RC" "ledger_add succeeds despite the conflict (flag != block)"
+  f="$(ledger_dir "$dir")/AUTH-009.yaml"
+  if [ ! -f "$f" ]; then
+    fail "the conflicting entry must still land on disk (escape valve is structural)"
+  fi
+  assert_contains "$(cat "$f" 2>/dev/null)" "JWT + Refresh Token" "persisted entry carries its re-proposed claim"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3190,6 +3241,7 @@ test_conflict_no_match_returns_0_silent
 test_conflict_loose_match_case_and_whitespace
 test_conflict_only_triggers_on_active_rejecter
 test_conflict_is_read_only_no_mutation
+test_add_still_persists_reproposed_rejected_option
 "
 
 for t in $TESTS; do
