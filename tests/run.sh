@@ -2932,6 +2932,28 @@ evidence:
   rm -rf "$dir"
 }
 
+test_conflict_no_match_returns_0_silent() {
+  # OPPOSITE: a draft whose claim relates to NONE of the active rejected options
+  # must NOT flag. Return 0, emit no review-required line. (Without this, a
+  # mutant that always flags would pass test 1.)
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度系統僅內部使用
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  call_check_conflict "$dir" 'claim: switch to GraphQL gateway
+evidence:
+  commits: [z99z99z]'
+  assert_eq 0 "$RC" "unrelated draft -> no conflict, return 0"
+  assert_not_contains "$OUT" "review required" "no flag emitted for an unrelated claim"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3071,6 +3093,7 @@ test_resume_displays_computed_status_not_stored
 test_resume_empty_or_absent_ledger_exits_0
 test_crown_cold_process_recovers_negative_space
 test_conflict_flags_reproposed_rejected_option
+test_conflict_no_match_returns_0_silent
 "
 
 for t in $TESTS; do
