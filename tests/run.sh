@@ -1092,6 +1092,32 @@ evidence:
   rm -rf "$dir"
 }
 
+test_session_start_ledger_injected_without_resume_or_task() {
+  # INDEPENDENT GATE (binding spec #3). With NO resume.md and NO tasks/current.md
+  # but an active ledger decision, the negative space MUST still be injected: the
+  # ledger block has its OWN gate (active set non-empty), not piggybacking on the
+  # resume/current-task presence. The stale recovery frame must be ABSENT (no
+  # resume/task), proving the ledger block stands alone.
+  local dir
+  dir=$(make_fixture_repo)
+  # deliberately NO write_resume / write_current_task
+  write_ledger_entry "$dir" "AUTH-001" 'claim: SOLO_LEDGER_CLAIM
+status: active
+rejected:
+  - option: SOLO_REJECTED_OPT
+    why: SOLO_WHY
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  assert_contains "$OUT" "SOLO_LEDGER_CLAIM" "ledger injected with no resume/current task"
+  assert_contains "$OUT" "SOLO_REJECTED_OPT" "rejected option injected standalone"
+  assert_contains "$OUT" "standing constraints" "ledger frame present standalone"
+  assert_not_contains "$OUT" "recovery context only" "no stale-recovery frame when no resume/task"
+  rm -rf "$dir"
+}
+
 test_settings_wires_session_start_and_preserves_pretooluse_stop() {
   # The project settings.json must register a SessionStart hook pointing at
   # session-start-context.sh, WITHOUT disturbing the existing PreToolUse / Stop
@@ -3464,6 +3490,7 @@ test_session_start_disclaimer_present_when_only_current_task
 test_session_start_disclaimer_soul_substrings_locked
 test_session_start_injects_ledger_negative_space
 test_session_start_ledger_frame_soul_substrings_locked
+test_session_start_ledger_injected_without_resume_or_task
 test_settings_wires_session_start_and_preserves_pretooluse_stop
 test_ledger_add_valid_entry_writes_file
 test_ledger_add_duplicate_id_rejected
