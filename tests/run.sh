@@ -1118,6 +1118,27 @@ evidence:
   rm -rf "$dir"
 }
 
+test_session_start_absent_or_empty_ledger_no_block_clean() {
+  # GRACEFUL (binding spec #4/#5). With NO .claude/ledger/ (and also when the
+  # dir exists but is empty), the hook must NOT emit the ledger frame, must leak
+  # ZERO stderr (the reader call's stderr must not surface), and exit 0.
+  local dir
+  dir=$(make_fixture_repo)
+  # no ledger at all
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "exit 0 with no ledger"
+  assert_eq "" "$ERR" "no stderr leaked with no ledger"
+  assert_not_contains "$OUT" "standing constraints" "no ledger frame when ledger absent"
+  assert_not_contains "$OUT" "decision ledger negative space" "no ledger section when absent"
+  # now an empty ledger directory
+  mkdir -p "$dir/.claude/ledger"
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "exit 0 with empty ledger dir"
+  assert_eq "" "$ERR" "no stderr leaked with empty ledger dir"
+  assert_not_contains "$OUT" "standing constraints" "no ledger frame when ledger empty"
+  rm -rf "$dir"
+}
+
 test_settings_wires_session_start_and_preserves_pretooluse_stop() {
   # The project settings.json must register a SessionStart hook pointing at
   # session-start-context.sh, WITHOUT disturbing the existing PreToolUse / Stop
@@ -3491,6 +3512,7 @@ test_session_start_disclaimer_soul_substrings_locked
 test_session_start_injects_ledger_negative_space
 test_session_start_ledger_frame_soul_substrings_locked
 test_session_start_ledger_injected_without_resume_or_task
+test_session_start_absent_or_empty_ledger_no_block_clean
 test_settings_wires_session_start_and_preserves_pretooluse_stop
 test_ledger_add_valid_entry_writes_file
 test_ledger_add_duplicate_id_rejected
