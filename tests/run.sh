@@ -3164,6 +3164,45 @@ evidence:
   rm -rf "$dir"
 }
 
+test_scope_conflict_only_active_pairs() {
+  # CONSTITUTION LOCK 3 (kills the "scan every entry, not just active" mutant):
+  # a superseded decision is OUT of the active set, so even if it shares a file
+  # with an active one it must NOT trigger. Setup: A (AUTH-002) supersedes B
+  # (AUTH-001); both list auth/service.ts. B is no longer active, so the A/B pair
+  # must NOT flag. Then add C (LOG-003), active, also over auth/service.ts: the
+  # A/C pair (both active) MUST flag. Proves the check stands on active ids only.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+  files: [auth/service.ts]'
+  write_raw_entry "$dir" "AUTH-002" 'claim: JWT with rotation
+supersedes: [AUTH-001]
+evidence:
+  commits: [b22b22b]
+  files: [auth/service.ts]'
+  # Only A (AUTH-002) is active here; B (AUTH-001) is superseded -> no pair.
+  call_check_scope "$dir"
+  assert_eq 0 "$RC" "superseded B over the same file does NOT flag (B not active)"
+  assert_not_contains "$OUT" "AUTH-001" "a superseded decision never appears in a scope flag"
+  # Now add C, active, sharing the same file with A -> A/C is an active pair.
+  write_raw_entry "$dir" "LOG-003" 'claim: structured logging
+supersedes: []
+evidence:
+  commits: [c33c33c]
+  files: [auth/service.ts]'
+  call_check_scope "$dir"
+  if [ "$RC" -eq 0 ]; then
+    fail "two active decisions (AUTH-002, LOG-003) over the same file must flag"
+  fi
+  assert_contains "$OUT" "AUTH-002" "active pair flag names AUTH-002"
+  assert_contains "$OUT" "LOG-003" "active pair flag names LOG-003"
+  assert_not_contains "$OUT" "AUTH-001" "superseded AUTH-001 still excluded after C is added"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3310,6 +3349,7 @@ test_conflict_is_read_only_no_mutation
 test_add_still_persists_reproposed_rejected_option
 test_scope_conflict_flags_shared_file
 test_scope_conflict_disjoint_files_returns_0
+test_scope_conflict_only_active_pairs
 "
 
 for t in $TESTS; do
