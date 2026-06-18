@@ -2491,6 +2491,66 @@ test_ledger_add_missing_approval_reason_rejected() {
   rm -rf "$dir"
 }
 
+# A SECOND fully-valid entry whose content DIFFERS from write_valid_entry_stdin.
+# Used by the append-only mutant-killer: because this body would itself pass
+# validation, the ONLY thing that can stop it from rewriting the existing file
+# is the append-only duplicate-id guard. (If the killer used an invalid body,
+# validation alone would block the write and the test would pass vacuously.)
+write_valid_entry_stdin_v2() {
+  cat <<'EOF'
+date: 2026-06-19
+claim: DIFFERENT CLAIM v2
+rejected:
+  - option: Sessions
+    why: 不適合無狀態服務
+supersedes: []
+evidence:
+  commits: [b42c9d1]
+verification:
+  - npm test auth/*
+note: |
+  approval: 第二版理由
+EOF
+}
+
+test_ledger_add_never_mutates_existing_file() {
+  # MUTANT-KILLER for append-only: write AUTH-001, record its git hash-object;
+  # attempt a second add for the same id with a DIFFERENT but otherwise-VALID
+  # body -> rejected AND the original file's content hash is byte-for-byte
+  # unchanged. Using a valid v2 body ensures only the append-only guard (not
+  # validation) protects the file, so removing the guard genuinely fails this.
+  local dir f h0 h1
+  dir=$(mktemp -d)
+  call_ledger_add "$dir" "AUTH-001" write_valid_entry_stdin
+  assert_eq 0 "$RC" "first add succeeds"
+  f="$(ledger_dir "$dir")/AUTH-001.yaml"
+  h0=$(git hash-object "$f")
+  call_ledger_add "$dir" "AUTH-001" write_valid_entry_stdin_v2
+  if [ "$RC" -eq 0 ]; then
+    fail "second add must be rejected (append-only)"
+  fi
+  h1=$(git hash-object "$f")
+  assert_eq "$h0" "$h1" "original file content hash must be unchanged after rejected re-add"
+  rm -rf "$dir"
+}
+
+test_ledger_add_path_traversal_id_rejected() {
+  # An id is the storage primary key and forms the filename. A traversal id like
+  # `../evil` (or anything not matching ^[A-Z]+-[0-9]+$) must be rejected, and no
+  # file may be written anywhere (escaping .claude/ledger/).
+  local dir
+  dir=$(mktemp -d)
+  call_ledger_add "$dir" "../evil" write_valid_entry_stdin
+  if [ "$RC" -eq 0 ]; then
+    fail "a path-traversal id must be rejected"
+  fi
+  if [ -e "$dir/evil.yaml" ] || [ -e "$dir/evil" ]; then
+    fail "traversal id must NOT write a file outside .claude/ledger/"
+  fi
+  assert_contains "$ERR" "id" "rejection mentions the bad id"
+  rm -rf "$dir"
+}
+
 test_ledger_add_missing_claim_rejected() {
   # An entry without a `claim:` line is invalid -> rejected, no file written,
   # stderr explains claim is required.
@@ -2631,6 +2691,8 @@ test_ledger_add_duplicate_id_rejected
 test_ledger_add_missing_claim_rejected
 test_ledger_add_missing_evidence_commits_rejected
 test_ledger_add_missing_approval_reason_rejected
+test_ledger_add_path_traversal_id_rejected
+test_ledger_add_never_mutates_existing_file
 "
 
 for t in $TESTS; do

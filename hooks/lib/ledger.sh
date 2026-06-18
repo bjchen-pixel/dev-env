@@ -80,6 +80,13 @@ ledger_add() {
   local body
   body=$(cat)
 
+  # id is the primary key AND the filename: lock its shape so it can never escape
+  # .claude/ledger/ (no `/`, no `..`). Format: ^[A-Z]+-[0-9]+$ (e.g. AUTH-001).
+  if ! printf '%s' "$id" | grep -Eq '^[A-Z]+-[0-9]+$'; then
+    printf '[ledger_add] rejected: invalid id [%s] (must match ^[A-Z]+-[0-9]+$)\n' "$id" >&2
+    return 1
+  fi
+
   local dir="$root/.claude/ledger"
   local file="$dir/$id.yaml"
 
