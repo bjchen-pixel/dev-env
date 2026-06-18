@@ -2954,6 +2954,32 @@ evidence:
   rm -rf "$dir"
 }
 
+test_conflict_loose_match_case_and_whitespace() {
+  # MATCHING-LOOSENESS LOCK: the comparison must be conservative — case-
+  # insensitive and whitespace-tolerant. AUTH-001 rejected "JWT + Refresh
+  # Token"; a draft claim "jwt  +  refresh   token" (lowercased, extra spaces)
+  # must STILL flag. This kills an exact-match mutant: better a false positive
+  # ("not the same thing") than a silently-missed drift.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  call_check_conflict "$dir" 'claim: jwt  +  refresh   token
+evidence:
+  commits: [z99z99z]'
+  if [ "$RC" -eq 0 ]; then
+    fail "loose (case+whitespace) variant of a rejected option must still flag"
+  fi
+  assert_contains "$OUT" "AUTH-001" "loose match still names the rejecter"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3094,6 +3120,7 @@ test_resume_empty_or_absent_ledger_exits_0
 test_crown_cold_process_recovers_negative_space
 test_conflict_flags_reproposed_rejected_option
 test_conflict_no_match_returns_0_silent
+test_conflict_loose_match_case_and_whitespace
 "
 
 for t in $TESTS; do
