@@ -1016,6 +1016,40 @@ test_session_start_disclaimer_soul_substrings_locked() {
   rm -rf "$dir"
 }
 
+# --- v3-008 insert: SessionStart injects ledger negative space ---------------
+
+# write_ledger_entry <dir> <id> <body>  -> writes .claude/ledger/<id>.yaml.
+#   Slice-1/2 use write_raw_entry for the same job; this alias keeps the
+#   session-start tests self-describing.
+write_ledger_entry() {
+  local dir="$1" id="$2" body="$3"
+  mkdir -p "$dir/.claude/ledger"
+  printf '%s\n' "$body" > "$dir/.claude/ledger/$id.yaml"
+}
+
+test_session_start_injects_ledger_negative_space() {
+  # SOUL of this slice. With an ACTIVE decision in .claude/ledger/, the hook's
+  # stdout must carry that decision's negative space: claim + a rejected option
+  # + its why. This is what makes a cold start auto-recover past decisions
+  # without a manual ledger-resume.sh call.
+  local dir
+  dir=$(make_fixture_repo)
+  write_ledger_entry "$dir" "AUTH-001" 'claim: LEDGER_CLAIM_JWT_ONLY
+status: active
+rejected:
+  - option: LEDGER_REJECTED_REFRESH_TOKEN
+    why: LEDGER_WHY_INTERNAL_ONLY
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  assert_contains "$OUT" "LEDGER_CLAIM_JWT_ONLY" "ledger claim injected"
+  assert_contains "$OUT" "LEDGER_REJECTED_REFRESH_TOKEN" "rejected option injected"
+  assert_contains "$OUT" "LEDGER_WHY_INTERNAL_ONLY" "rejection why injected"
+  rm -rf "$dir"
+}
+
 test_settings_wires_session_start_and_preserves_pretooluse_stop() {
   # The project settings.json must register a SessionStart hook pointing at
   # session-start-context.sh, WITHOUT disturbing the existing PreToolUse / Stop
@@ -3386,6 +3420,7 @@ test_session_start_no_resume_degrades_gracefully
 test_session_start_no_files_at_all_exits_0
 test_session_start_disclaimer_present_when_only_current_task
 test_session_start_disclaimer_soul_substrings_locked
+test_session_start_injects_ledger_negative_space
 test_settings_wires_session_start_and_preserves_pretooluse_stop
 test_ledger_add_valid_entry_writes_file
 test_ledger_add_duplicate_id_rejected

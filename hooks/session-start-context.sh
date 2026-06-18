@@ -42,4 +42,27 @@ if [ -f "$current_task" ]; then
   cat "$current_task"
 fi
 
+# Decision ledger negative space (v3-008). DISTINCT framing from the stale
+# recovery context above: these are recorded, human-approved past decisions and
+# are to be treated as standing constraints, NOT as stale state that the current
+# input may override. Content is the ledger-resume.sh reader's output (reused,
+# not reimplemented). The reader exits 0 and prints nothing when there is no
+# active decision, so a non-empty capture is exactly the gate (active set
+# non-empty), independent of resume.md / current task. stderr is discarded so a
+# clean cold start never leaks anything.
+ledger_resume="$(dirname "$0")/ledger-resume.sh"
+ledger_negative_space=""
+if [ -f "$ledger_resume" ]; then
+  ledger_negative_space=$(bash "$ledger_resume" 2>/dev/null)
+fi
+if [ -n "$ledger_negative_space" ]; then
+  printf '\n===== recorded decisions (human-approved) — standing constraints, flag for review =====\n'
+  printf 'These are recorded, human-approved past decisions and their negative space.\n'
+  printf 'Treat them as standing constraints: if your current work conflicts with one,\n'
+  printf 'flag for review and let a human decide. Do NOT silently override them; you have\n'
+  printf 'no authority to declare them invalid.\n'
+  printf '\n----- decision ledger negative space -----\n'
+  printf '%s\n' "$ledger_negative_space"
+fi
+
 exit 0
