@@ -184,6 +184,101 @@ EOF
   [ "$hit" -eq 0 ]
 }
 
+# _ledger_evidence_files <file>
+#   Emits the file paths listed in this entry's `evidence.files`, one per line,
+#   each trimmed. Supports inline flow `files: [a, b]` and block form
+#   `files:\n  - a\n  - b`, nested under the top-level `evidence:` block. Reuses
+#   the same nested-key awk pattern as ledger_validate_entry's evidence.commits.
+#   Empty output if the field is absent or empty.
+_ledger_evidence_files() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  awk '
+    /^evidence:[ \t]*$/ { inev=1; next }
+    inev && /^[^ \t]/ { inev=0 }
+    # inline flow form: files: [a, b]
+    inev && /^[ \t]+files:[ \t]*\[/ {
+      v=$0
+      sub(/^[ \t]+files:[ \t]*\[/, "", v)
+      sub(/\].*$/, "", v)
+      n=split(v, a, ",")
+      for (i=1; i<=n; i++) {
+        gsub(/^[ \t]+|[ \t]+$/, "", a[i])
+        if (length(a[i])>0) print a[i]
+      }
+      next
+    }
+    # block form: open the files list, read following `    - path` lines
+    inev && /^[ \t]+files:[ \t]*$/ { inf=1; next }
+    inf && /^[ \t]+[a-z_]+:/ { inf=0 }
+    inf && /^[^ \t]/ { inf=0 }
+    inf && /^[ \t]*-[ \t]*/ {
+      v=$0
+      sub(/^[ \t]*-[ \t]*/, "", v)
+      sub(/[ \t]*#.*$/, "", v)
+      sub(/^[ \t]+|[ \t]+$/, "", v)
+      if (length(v)>0) print v
+    }
+  ' "$file"
+}
+
+# ledger_check_scope_conflicts [root]   (no stdin)
+#   Read-only structural-drift check over the EXISTING ledger. The active set
+#   already guarantees no supersedes edge between any two active entries
+#   (ledger_active_ids), so the trigger collapses to: any two ACTIVE decisions
+#   whose evidence.files intersect (exact path match) are both governing the
+#   same ground — in an append-only world one should supersede the other. For
+#   every unordered active pair with a non-empty file intersection, prints one
+#   "review required" line naming both ids and the shared file(s). Returns 0 when
+#   no such pair exists, non-zero (a review-required SIGNAL, not a veto) when at
+#   least one does. Writes nothing, mutates nothing. bash 3.2: pair enumeration
+#   via i<j index loop (no assoc arrays).
+#   $1 (optional) = repo root (defaults to pwd -P).
+ledger_check_scope_conflicts() {
+  local root="${1:-$(pwd -P)}"
+  local dir="$root/.claude/ledger"
+
+  # Collect active ids into a positional array (bash 3.2: no assoc, no mapfile).
+  local ids="" id
+  for id in $(ledger_active_ids "$root"); do
+    ids="$ids $id"
+  done
+  set -- $ids
+  local n=$#
+
+  local hit=0 i j
+  i=1
+  while [ "$i" -le "$n" ]; do
+    j=$((i + 1))
+    while [ "$j" -le "$n" ]; do
+      local id_i id_j shared
+      eval "id_i=\${$i}"
+      eval "id_j=\${$j}"
+      # exact-match intersection of the two entries' evidence.files (trimmed).
+      shared=$(
+        { _ledger_evidence_files "$dir/$id_i.yaml"
+          _ledger_evidence_files "$dir/$id_j.yaml"
+        } | sort | uniq -d
+      )
+      if [ -n "$shared" ]; then
+        local f
+        while IFS= read -r f; do
+          [ -n "$f" ] || continue
+          printf '[ledger] review required: %s and %s are both active over %s — should one supersede the other?\n' \
+            "$id_i" "$id_j" "$f"
+        done <<EOF
+$shared
+EOF
+        hit=1
+      fi
+      j=$((j + 1))
+    done
+    i=$((i + 1))
+  done
+
+  [ "$hit" -eq 0 ]
+}
+
 # _ledger_entry_ids <ledger_dir>
 #   Emits the id (basename without .yaml) of every entry file, one per line.
 #   Empty output if the directory is absent. Uses a glob, not `ls` parsing.

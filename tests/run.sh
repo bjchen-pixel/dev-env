@@ -3098,6 +3098,49 @@ evidence:
   rm -rf "$dir"
 }
 
+# --- Slice 2c: ledger_check_scope_conflicts ----------------------------------
+
+# call_check_scope <dir>
+#   Sources the lib in <dir> and runs ledger_check_scope_conflicts with NO stdin
+#   (it scans the existing ledger, not a draft). Sets RC / OUT / ERR.
+call_check_scope() {
+  local dir="$1"
+  local out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  ( cd "$dir" && . "$LEDGER_LIB" && ledger_check_scope_conflicts ) >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+test_scope_conflict_flags_shared_file() {
+  # SOUL: two ACTIVE decisions that both govern the same file are structural
+  # drift — in an append-only world one should supersede the other. AUTH-001 and
+  # LOG-003 are both active and both list evidence.files: auth/service.ts. The
+  # check must FLAG: stdout names BOTH ids and the shared file, rc non-zero
+  # (review-required signal, not a veto).
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+  files: [auth/service.ts]'
+  write_raw_entry "$dir" "LOG-003" 'claim: structured logging
+supersedes: []
+evidence:
+  commits: [b22b22b]
+  files: [auth/service.ts]'
+  call_check_scope "$dir"
+  if [ "$RC" -eq 0 ]; then
+    fail "two active decisions over the same file must flag review-required (non-zero rc)"
+  fi
+  assert_contains "$OUT" "AUTH-001" "flag names the first decision"
+  assert_contains "$OUT" "LOG-003" "flag names the second decision"
+  assert_contains "$OUT" "auth/service.ts" "flag names the shared file"
+  assert_contains "$OUT" "review required" "flag carries the review-required signal"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3242,6 +3285,7 @@ test_conflict_loose_match_case_and_whitespace
 test_conflict_only_triggers_on_active_rejecter
 test_conflict_is_read_only_no_mutation
 test_add_still_persists_reproposed_rejected_option
+test_scope_conflict_flags_shared_file
 "
 
 for t in $TESTS; do
