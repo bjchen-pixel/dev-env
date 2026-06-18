@@ -2747,6 +2747,76 @@ open_questions:
   rm -rf "$dir"
 }
 
+test_resume_omits_superseded_claims() {
+  # AUTH-002 supersedes AUTH-001. The Reader must show the surviving claim and
+  # OMIT the superseded one (claim string + its rejected option must be absent).
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: SUPERSEDED_CLAIM_OLD
+status: active
+rejected:
+  - option: OLD_REJECTED_OPT
+    why: old-why
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  write_raw_entry "$dir" "AUTH-002" 'claim: SURVIVING_CLAIM_NEW
+status: active
+rejected:
+  - option: NEW_REJECTED_OPT
+    why: new-why
+supersedes: [AUTH-001]
+evidence:
+  commits: [b22b22b]'
+  run_resume "$dir"
+  assert_eq 0 "$RC" "reader exits 0"
+  assert_contains "$OUT" "SURVIVING_CLAIM_NEW" "surviving claim shown"
+  assert_not_contains "$OUT" "SUPERSEDED_CLAIM_OLD" "superseded claim omitted"
+  assert_not_contains "$OUT" "OLD_REJECTED_OPT" "superseded decision's rejected option omitted"
+  rm -rf "$dir"
+}
+
+test_resume_not_full_dump() {
+  # NOT a full decision dump: a superseded id must not appear anywhere in the
+  # output (not even as a heading). Only active decisions surface.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: old
+status: active
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  write_raw_entry "$dir" "AUTH-002" 'claim: new
+status: active
+supersedes: [AUTH-001]
+evidence:
+  commits: [b22b22b]'
+  run_resume "$dir"
+  assert_eq 0 "$RC" "reader exits 0"
+  assert_contains "$OUT" "AUTH-002" "active id present"
+  assert_not_contains "$OUT" "AUTH-001" "superseded id does not appear (not a full dump)"
+  rm -rf "$dir"
+}
+
+test_resume_has_no_score() {
+  # The output must carry NO confidence/score field (assumed pseudo-precision).
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: opt
+    why: why
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  run_resume "$dir"
+  assert_eq 0 "$RC" "reader exits 0"
+  assert_not_contains "$OUT" "score" "no score field in output"
+  assert_not_contains "$OUT" "confidence" "no confidence field in output"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2879,6 +2949,9 @@ test_active_set_ignores_manual_superseded_by_field
 test_active_set_ignores_stored_status_field
 test_resume_output_includes_rejected_option_and_why
 test_resume_includes_claim_and_aggregated_open_questions
+test_resume_omits_superseded_claims
+test_resume_not_full_dump
+test_resume_has_no_score
 "
 
 for t in $TESTS; do
