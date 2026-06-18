@@ -65,4 +65,26 @@ if [ -n "$ledger_negative_space" ]; then
   printf '%s\n' "$ledger_negative_space"
 fi
 
+# Scope-conflict structural signal (v3-008 insert #2). Reuses
+# ledger_check_scope_conflicts (lib) in a CHILD shell — never sourced into this
+# main shell — so its pair/intersection logic is not reimplemented and this
+# shell stays unpolluted. The function prints one "review required" line per
+# active pair sharing an evidence.files path and prints nothing otherwise, so a
+# non-empty capture is exactly the gate (a scope conflict exists), independent
+# of resume.md / current task / negative-space presence. stderr is discarded so
+# a clean cold start never leaks anything.
+ledger_lib="$(dirname "$0")/lib/ledger.sh"
+scope_conflicts=""
+if [ -f "$ledger_lib" ]; then
+  scope_conflicts=$(bash -c '. "$1" && ledger_check_scope_conflicts' _ "$ledger_lib" 2>/dev/null)
+fi
+if [ -n "$scope_conflicts" ]; then
+  printf '\n===== scope conflict — structural signal, review required (human decides) =====\n'
+  printf 'Two or more recorded decisions are active over the same ground. This is a\n'
+  printf 'structural signal, not a verdict: flag for review and let a human decide which\n'
+  printf 'should supersede the other. You have NO authority to declare any of them invalid.\n'
+  printf '\n----- decision ledger scope conflicts -----\n'
+  printf '%s\n' "$scope_conflicts"
+fi
+
 exit 0

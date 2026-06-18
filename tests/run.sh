@@ -1139,6 +1139,37 @@ test_session_start_absent_or_empty_ledger_no_block_clean() {
   rm -rf "$dir"
 }
 
+test_session_start_surfaces_scope_conflict() {
+  # SOUL of this slice (v3-008 insert #2). On a COLD start, when two ACTIVE
+  # ledger decisions both govern the same evidence.files path, the hook's stdout
+  # must surface the scope-conflict review-required line naming BOTH ids and the
+  # shared file. This is the auto-surfacing of structural drift at session start,
+  # without a manual ledger_check_scope_conflicts call. exit 0.
+  local dir
+  dir=$(make_fixture_repo)
+  write_ledger_entry "$dir" "AUTH-001" 'claim: SCOPE_CLAIM_JWT
+status: active
+rejected: []
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+  files: [SCOPE_SHARED_FILE.ts]'
+  write_ledger_entry "$dir" "LOG-003" 'claim: SCOPE_CLAIM_LOG
+status: active
+rejected: []
+supersedes: []
+evidence:
+  commits: [b22b22b]
+  files: [SCOPE_SHARED_FILE.ts]'
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0 with scope conflict"
+  assert_contains "$OUT" "AUTH-001" "scope-conflict line names the first decision"
+  assert_contains "$OUT" "LOG-003" "scope-conflict line names the second decision"
+  assert_contains "$OUT" "SCOPE_SHARED_FILE.ts" "scope-conflict line names the shared file"
+  assert_contains "$OUT" "review required" "scope-conflict carries the review-required signal"
+  rm -rf "$dir"
+}
+
 test_settings_wires_session_start_and_preserves_pretooluse_stop() {
   # The project settings.json must register a SessionStart hook pointing at
   # session-start-context.sh, WITHOUT disturbing the existing PreToolUse / Stop
@@ -3513,6 +3544,7 @@ test_session_start_injects_ledger_negative_space
 test_session_start_ledger_frame_soul_substrings_locked
 test_session_start_ledger_injected_without_resume_or_task
 test_session_start_absent_or_empty_ledger_no_block_clean
+test_session_start_surfaces_scope_conflict
 test_settings_wires_session_start_and_preserves_pretooluse_stop
 test_ledger_add_valid_entry_writes_file
 test_ledger_add_duplicate_id_rejected
