@@ -2980,6 +2980,44 @@ evidence:
   rm -rf "$dir"
 }
 
+test_conflict_only_triggers_on_active_rejecter() {
+  # CONSTITUTION LOCK 3: a rejection only flags while its decision is ACTIVE.
+  # AUTH-001 rejects "JWT + Refresh Token" and the draft re-proposes it -> flag.
+  # But once AUTH-002 SUPERSEDES AUTH-001, that old rejection no longer governs,
+  # so the SAME draft must NOT be flagged by AUTH-001 anymore. Stands on
+  # ledger_active_ids.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  # sanity: before supersession the draft IS flagged by AUTH-001
+  call_check_conflict "$dir" 'claim: JWT + Refresh Token
+evidence:
+  commits: [z99z99z]'
+  assert_contains "$OUT" "AUTH-001" "pre-supersede: AUTH-001 flags the draft"
+  # now AUTH-002 supersedes AUTH-001 (its rejected set differs)
+  write_raw_entry "$dir" "AUTH-002" 'claim: JWT with rotation
+status: active
+rejected:
+  - option: something else entirely
+    why: unrelated
+supersedes: [AUTH-001]
+evidence:
+  commits: [b22b22b]'
+  call_check_conflict "$dir" 'claim: JWT + Refresh Token
+evidence:
+  commits: [z99z99z]'
+  assert_eq 0 "$RC" "superseded rejecter no longer flags -> return 0"
+  assert_not_contains "$OUT" "AUTH-001" "a superseded decision's rejection no longer fires"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3121,6 +3159,7 @@ test_crown_cold_process_recovers_negative_space
 test_conflict_flags_reproposed_rejected_option
 test_conflict_no_match_returns_0_silent
 test_conflict_loose_match_case_and_whitespace
+test_conflict_only_triggers_on_active_rejecter
 "
 
 for t in $TESTS; do
