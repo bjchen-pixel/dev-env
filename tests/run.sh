@@ -1050,6 +1050,48 @@ evidence:
   rm -rf "$dir"
 }
 
+test_session_start_ledger_frame_soul_substrings_locked() {
+  # FRAME SOUL LOCK (binding spec #2). The ledger block must carry the
+  # "respect + flag only" framing, semantically OPPOSITE to the resume block's
+  # "stale / may be overridden" framing. Lock the load-bearing phrases AND prove
+  # the ledger negative space is NOT nested under the "recovery context only ...
+  # stale" frame (a mutant that reuses the resume disclaimer must fail here).
+  local dir
+  dir=$(make_fixture_repo)
+  # resume present too, so both frames coexist and separation is observable.
+  write_resume "$dir" "RESUME_BODY_FRAME"
+  write_ledger_entry "$dir" "AUTH-001" 'claim: FRAMED_LEDGER_CLAIM
+status: active
+rejected:
+  - option: FRAMED_REJECTED_OPT
+    why: FRAMED_WHY
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  # load-bearing framing substrings (respect + standing constraint + flag only):
+  assert_contains "$OUT" "recorded, human-approved past decisions" "lock: recorded/human-approved"
+  assert_contains "$OUT" "standing constraints" "lock: standing constraints"
+  assert_contains "$OUT" "flag for review" "lock: flag for review"
+  assert_contains "$OUT" "silently override" "lock: must not silently override"
+  assert_contains "$OUT" "no authority to declare" "lock: no authority to declare invalid"
+  # FRAME SEPARATION: the ledger claim must NOT sit under the resume's stale
+  # frame. Everything from the "recovery context only" marker up to the ledger
+  # block belongs to resume; the ledger claim must appear AFTER its own frame
+  # header, not inside the stale-recovery segment. Concretely: between the stale
+  # disclaimer and the ledger claim, the ledger's OWN header must intervene.
+  local before_claim
+  before_claim=${OUT%%FRAMED_LEDGER_CLAIM*}
+  assert_contains "$before_claim" "standing constraints" "ledger claim sits under its OWN standing-constraints header"
+  # and the stale 'override the current task' wording must NOT be the frame that
+  # immediately precedes the ledger claim: the ledger header comes between them.
+  local tail_after_stale
+  tail_after_stale=${before_claim##*standing constraints}
+  assert_not_contains "$tail_after_stale" "stale recovery state" "ledger block not nested under the stale-recovery frame"
+  rm -rf "$dir"
+}
+
 test_settings_wires_session_start_and_preserves_pretooluse_stop() {
   # The project settings.json must register a SessionStart hook pointing at
   # session-start-context.sh, WITHOUT disturbing the existing PreToolUse / Stop
@@ -3421,6 +3463,7 @@ test_session_start_no_files_at_all_exits_0
 test_session_start_disclaimer_present_when_only_current_task
 test_session_start_disclaimer_soul_substrings_locked
 test_session_start_injects_ledger_negative_space
+test_session_start_ledger_frame_soul_substrings_locked
 test_settings_wires_session_start_and_preserves_pretooluse_stop
 test_ledger_add_valid_entry_writes_file
 test_ledger_add_duplicate_id_rejected
