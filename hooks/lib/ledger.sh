@@ -101,3 +101,82 @@ ledger_add() {
   printf '%s\n' "$body" > "$file" || return 1
   return 0
 }
+
+# _ledger_entry_ids <ledger_dir>
+#   Emits the id (basename without .yaml) of every entry file, one per line.
+#   Empty output if the directory is absent. Uses a glob, not `ls` parsing.
+_ledger_entry_ids() {
+  local dir="$1" f base
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*.yaml; do
+    [ -e "$f" ] || continue       # no-match glob guard
+    base=$(basename "$f")
+    printf '%s\n' "${base%.yaml}"
+  done
+}
+
+# _ledger_supersedes_of <file>
+#   Emits the ids listed in this entry's `supersedes:` field, one per line.
+#   Supports inline flow form `supersedes: [A-1, B-2]` and block form
+#   `supersedes:\n  - A-1\n  - B-2`. The superseded_by direction is NEVER read.
+_ledger_supersedes_of() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  awk '
+    # inline flow form on the same line as the key
+    /^supersedes:[ \t]*\[/ {
+      v=$0
+      sub(/^supersedes:[ \t]*\[/, "", v)
+      sub(/\].*$/, "", v)
+      n=split(v, a, ",")
+      for (i=1; i<=n; i++) {
+        gsub(/[ \t]/, "", a[i])
+        if (length(a[i])>0) print a[i]
+      }
+      next
+    }
+    # block form: open the list, read following `  - id` lines
+    /^supersedes:[ \t]*$/ { inblk=1; next }
+    inblk && /^[^ \t-]/ { inblk=0 }
+    inblk && /^[ \t]*-[ \t]*/ {
+      v=$0
+      sub(/^[ \t]*-[ \t]*/, "", v)
+      sub(/[ \t]*#.*$/, "", v)
+      gsub(/[ \t]/, "", v)
+      if (length(v)>0) print v
+    }
+  ' "$file"
+}
+
+# ledger_active_ids
+#   Prints, one per line, the ids of all entries that are NOT superseded by any
+#   real entry. Supersession is computed dynamically: scan every entry's
+#   supersedes edges to build the superseded set, then emit entries absent from
+#   it. No assoc arrays (bash 3.2): membership via grep over a newline list.
+#   The stored `status:` field and any `superseded_by:` field are IGNORED — the
+#   only source of truth is real supersedes edges.
+#   $1 (optional) = repo root (defaults to pwd -P).
+ledger_active_ids() {
+  local root="${1:-$(pwd -P)}"
+  local dir="$root/.claude/ledger"
+  [ -d "$dir" ] || return 0
+
+  # Build the superseded set (newline-delimited) from all real supersedes edges.
+  local superseded="" id
+  for id in $(_ledger_entry_ids "$dir"); do
+    local s
+    s=$(_ledger_supersedes_of "$dir/$id.yaml")
+    if [ -n "$s" ]; then
+      superseded="$superseded
+$s"
+    fi
+  done
+
+  # Emit ids not present in the superseded set.
+  for id in $(_ledger_entry_ids "$dir"); do
+    if printf '%s\n' "$superseded" | grep -qx "$id"; then
+      continue
+    fi
+    printf '%s\n' "$id"
+  done
+}

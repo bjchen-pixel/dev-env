@@ -2567,6 +2567,51 @@ test_ledger_add_missing_claim_rejected() {
   rm -rf "$dir"
 }
 
+# seed_entry <dir> <id> <claim> <supersedes_csv>
+#   Writes a valid ledger entry for <id> via ledger_add. <supersedes_csv> is a
+#   comma-separated list of ids (may be empty -> []). Carries a real rejected
+#   block, evidence.commits, verification, and an approval note so it passes the
+#   gate. Sets RC.
+seed_entry() {
+  local dir="$1" id="$2" claim="$3" sup="$4"
+  local supline
+  if [ -n "$sup" ]; then
+    supline="supersedes: [$sup]"
+  else
+    supline="supersedes: []"
+  fi
+  {
+    printf 'date: 2026-06-18\n'
+    printf 'claim: %s\n' "$claim"
+    printf 'rejected:\n  - option: alt-for-%s\n    why: reason-for-%s\n' "$id" "$id"
+    printf '%s\n' "$supline"
+    printf 'evidence:\n  commits: [a31f8f2]\n'
+    printf 'verification:\n  - npm test auth/*\n'
+    printf 'note: |\n  approval: seeded %s\n' "$id"
+  } | ( cd "$dir" && . "$LEDGER_LIB" && ledger_add "$id" )
+  RC=$?
+}
+
+# active_ids <dir> -> echoes ledger_active_ids output (one id per line), sorted.
+active_ids() {
+  ( cd "$1" && . "$LEDGER_LIB" && ledger_active_ids ) | sort
+}
+
+test_active_set_excludes_superseded() {
+  # AUTH-002 supersedes AUTH-001. The active set must contain 002 and exclude
+  # 001 (superseded), derived purely from the supersedes edge.
+  local dir out
+  dir=$(mktemp -d)
+  seed_entry "$dir" "AUTH-001" "JWT only" ""
+  assert_eq 0 "$RC" "seed AUTH-001"
+  seed_entry "$dir" "AUTH-002" "JWT with rotation" "AUTH-001"
+  assert_eq 0 "$RC" "seed AUTH-002"
+  out=$(active_ids "$dir")
+  assert_contains "$out" "AUTH-002" "AUTH-002 is active"
+  assert_not_contains "$out" "AUTH-001" "AUTH-001 is superseded -> not active"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2693,6 +2738,7 @@ test_ledger_add_missing_evidence_commits_rejected
 test_ledger_add_missing_approval_reason_rejected
 test_ledger_add_path_traversal_id_rejected
 test_ledger_add_never_mutates_existing_file
+test_active_set_excludes_superseded
 "
 
 for t in $TESTS; do
