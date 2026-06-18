@@ -2336,6 +2336,67 @@ test_install_sh_update_flag_reapplies_mode_a() {
   rm -rf "$dir" "$bindir"
 }
 
+# --- v3-008 Slice 1: Decision Ledger -----------------------------------------
+
+LEDGER_LIB="$REPO/hooks/lib/ledger.sh"
+LEDGER_RESUME="$REPO/hooks/ledger-resume.sh"
+
+# ledger_dir <dir> -> echoes the ledger directory path for a fixture repo.
+ledger_dir() {
+  printf '%s' "$1/.claude/ledger"
+}
+
+# A complete, valid YAML entry body fed on stdin to ledger_add. Callers may
+# override individual fields by writing their own; this is the canonical happy
+# path: claim + rejected(option+why) + evidence.commits + verification +
+# open_questions + an approval reason note.
+write_valid_entry_stdin() {
+  cat <<'EOF'
+date: 2026-06-18
+claim: JWT only
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度，系統僅內部使用
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+  files: [auth/service.ts]
+verification:
+  - npm test auth/*
+open_questions:
+  - token 過期窗口是否需縮短
+note: |
+  approval: 影響未來所有 auth 設計
+EOF
+}
+
+# call_ledger_add <dir> <id> <stdin_fn> -> sources lib in <dir>, pipes the body
+# emitted by <stdin_fn> into ledger_add <id>. Sets RC / OUT / ERR globals.
+call_ledger_add() {
+  local dir="$1" id="$2" stdin_fn="$3"
+  local out_f err_f
+  out_f=$(mktemp); err_f=$(mktemp)
+  "$stdin_fn" | ( cd "$dir" && . "$LEDGER_LIB" && ledger_add "$id" ) >"$out_f" 2>"$err_f"
+  RC=$?
+  OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
+}
+
+test_ledger_add_valid_entry_writes_file() {
+  # A complete valid entry with id AUTH-001 -> a new file lands at
+  # .claude/ledger/AUTH-001.yaml carrying the claim. ledger_add returns 0.
+  local dir
+  dir=$(mktemp -d)
+  call_ledger_add "$dir" "AUTH-001" write_valid_entry_stdin
+  assert_eq 0 "$RC" "ledger_add returns 0 on a valid entry"
+  local f
+  f="$(ledger_dir "$dir")/AUTH-001.yaml"
+  if [ ! -f "$f" ]; then
+    fail "ledger_add must write .claude/ledger/AUTH-001.yaml"
+  fi
+  assert_contains "$(cat "$f" 2>/dev/null)" "JWT only" "the written entry carries the claim"
+  rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -2455,6 +2516,7 @@ test_session_start_no_files_at_all_exits_0
 test_session_start_disclaimer_present_when_only_current_task
 test_session_start_disclaimer_soul_substrings_locked
 test_settings_wires_session_start_and_preserves_pretooluse_stop
+test_ledger_add_valid_entry_writes_file
 "
 
 for t in $TESTS; do
