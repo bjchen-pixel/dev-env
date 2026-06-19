@@ -3294,11 +3294,17 @@ EOF
 }
 
 test_add_still_persists_reproposed_rejected_option() {
-  # CONSTITUTION LOCK 1 (the soul of 2b): flag != block. ledger_add MUST NOT call
-  # ledger_check_conflict. Seed AUTH-001 (rejects "JWT + Refresh Token"); then
-  # ledger_add a NEW decision AUTH-009 whose claim re-proposes exactly that. The
-  # add MUST succeed (rc 0) and the file MUST land on disk. The escape valve is
-  # structural: there is no code path by which a conflict can block an entry.
+  # CONSTITUTION LOCK 1 (the soul, post-2a-wiring): flag != block. ledger_add NOW
+  # DOES consult ledger_check_conflict — but the consultation is structurally
+  # incapable of affecting the entry. The check's result reaches add only as
+  # captured stdout text destined for stderr (an advisory warning); its EXIT
+  # STATUS never touches add's control flow. The escape valve is thus upgraded
+  # from "zero coupling" (never call the check) to a RETURN-CODE FIREWALL (call
+  # it, but no `if`/`return` on its status can exist) — same guarantee, stronger
+  # construction: a conflict can warn, but there is no code path by which it can
+  # block an entry. Seed AUTH-001 (rejects "JWT + Refresh Token"); ledger_add a
+  # NEW decision AUTH-009 re-proposing exactly that; the add MUST succeed (rc 0)
+  # and the file MUST land on disk.
   local dir f
   dir=$(mktemp -d)
   write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
