@@ -1170,6 +1170,77 @@ evidence:
   rm -rf "$dir"
 }
 
+test_session_start_scope_conflict_frame_soul_substrings_locked() {
+  # FRAME SOUL LOCK (binding spec #2). The scope-conflict block must carry its
+  # OWN "structural signal / review required / human decides / no authority to
+  # invalidate" framing — the flag-only constitution line crossed into the hook
+  # layer. Lock the load-bearing phrases AND assert the KEY NEGATIVE: the frame
+  # must NOT declare any decision invalid / failed (a flag is not a verdict).
+  local dir
+  dir=$(make_fixture_repo)
+  write_ledger_entry "$dir" "AUTH-001" 'claim: FRAME_SCOPE_A
+status: active
+rejected: []
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+  files: [FRAME_SHARED.ts]'
+  write_ledger_entry "$dir" "LOG-003" 'claim: FRAME_SCOPE_B
+status: active
+rejected: []
+supersedes: []
+evidence:
+  commits: [b22b22b]
+  files: [FRAME_SHARED.ts]'
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0"
+  # load-bearing framing substrings (structural signal + review + human decides):
+  assert_contains "$OUT" "scope conflict" "lock: scope conflict header"
+  assert_contains "$OUT" "structural signal" "lock: structural signal, not a verdict"
+  assert_contains "$OUT" "review required" "lock: review required"
+  assert_contains "$OUT" "human decide" "lock: a human decides"
+  assert_contains "$OUT" "no authority to declare" "lock: no authority to declare invalid"
+  # KEY NEGATIVE: the scope-conflict frame must NEVER pronounce a verdict. The
+  # whole point is flag-only: a human supersedes, the agent does not invalidate.
+  # Scope the assertion to the frame region (from its header to end of stdout).
+  local frame
+  frame=${OUT##*scope conflict}
+  assert_not_contains "$frame" "invalid" "scope-conflict frame must not declare anything invalid"
+  assert_not_contains "$frame" "failed" "scope-conflict frame must not declare a decision failed"
+  rm -rf "$dir"
+}
+
+test_session_start_no_scope_conflict_when_files_disjoint() {
+  # MUTANT-KILLER for the scope-conflict GATE (binding spec #3). Two ACTIVE
+  # decisions that share NO evidence.files path must produce NO scope-conflict
+  # frame: the block fires only on a real structural conflict, never
+  # unconditionally. Without this lock, an "always emit the scope frame" mutant
+  # survives (the two firing tests both supply a conflict). Also asserts the
+  # scope-check call leaks zero stderr on the no-conflict path.
+  local dir
+  dir=$(make_fixture_repo)
+  write_ledger_entry "$dir" "AUTH-001" 'claim: DISJOINT_A
+status: active
+rejected: []
+supersedes: []
+evidence:
+  commits: [a31f8f2]
+  files: [DISJOINT_FILE_A.ts]'
+  write_ledger_entry "$dir" "LOG-003" 'claim: DISJOINT_B
+status: active
+rejected: []
+supersedes: []
+evidence:
+  commits: [b22b22b]
+  files: [DISJOINT_FILE_B.ts]'
+  run_session_start "$dir"
+  assert_eq 0 "$RC" "session-start exits 0 with no scope conflict"
+  assert_not_contains "$OUT" "scope conflict" "no scope-conflict frame when files are disjoint"
+  assert_not_contains "$OUT" "review required" "no review-required signal when files disjoint"
+  assert_eq "" "$ERR" "scope-check leaks no stderr on the no-conflict path"
+  rm -rf "$dir"
+}
+
 test_settings_wires_session_start_and_preserves_pretooluse_stop() {
   # The project settings.json must register a SessionStart hook pointing at
   # session-start-context.sh, WITHOUT disturbing the existing PreToolUse / Stop
@@ -3545,6 +3616,8 @@ test_session_start_ledger_frame_soul_substrings_locked
 test_session_start_ledger_injected_without_resume_or_task
 test_session_start_absent_or_empty_ledger_no_block_clean
 test_session_start_surfaces_scope_conflict
+test_session_start_scope_conflict_frame_soul_substrings_locked
+test_session_start_no_scope_conflict_when_files_disjoint
 test_settings_wires_session_start_and_preserves_pretooluse_stop
 test_ledger_add_valid_entry_writes_file
 test_ledger_add_duplicate_id_rejected
