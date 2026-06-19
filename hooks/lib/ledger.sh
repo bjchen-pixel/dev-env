@@ -97,8 +97,24 @@ ledger_add() {
 
   printf '%s' "$body" | ledger_validate_entry || return 1
 
+  # RETURN-CODE FIREWALL: consult the conflict check, but its exit status must be
+  # STRUCTURALLY unable to reach add's control flow. We capture only its stdout
+  # (the flag text) into a variable, with `|| true` swallowing ANY non-zero exit
+  # — including a hit, or the check erroring on a corrupt ledger. There is no
+  # `if`/`return` on the check's status anywhere below: a conflict can never
+  # block an entry. Computed BEFORE the write so the new entry is not yet in the
+  # active set and cannot self-flag.
+  local conflict_flag
+  conflict_flag=$( printf '%s' "$body" | ledger_check_conflict "$root" 2>/dev/null || true )
+
   mkdir -p "$dir" || return 1
   printf '%s\n' "$body" > "$file" || return 1
+
+  # Only after a SUCCESSFUL write do we surface the advisory warning, and only to
+  # stderr — never stdout, never into the entry file. A failed add emits nothing.
+  if [ -n "$conflict_flag" ]; then
+    printf '%s\n' "$conflict_flag" >&2
+  fi
   return 0
 }
 

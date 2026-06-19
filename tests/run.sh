@@ -3323,6 +3323,37 @@ evidence:
   rm -rf "$dir"
 }
 
+# --- Slice 2a wiring: ledger_add warns (stderr) on conflict, never blocks -----
+
+test_add_warns_on_reproposed_rejected_option_but_persists() {
+  # SOUL of the wiring: seed AUTH-001 (active) rejecting "JWT + Refresh Token".
+  # ledger_add a NEW valid entry AUTH-009 whose claim re-proposes exactly that.
+  # The add MUST (a) return 0, (b) land the file on disk carrying the claim, and
+  # (c) emit a "review required" line to STDERR naming the rejecter (AUTH-001).
+  # The warning is advisory: the entry is consulted against the active set but
+  # the check's result can never reach add's control flow (return-code firewall).
+  local dir f
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  call_ledger_add "$dir" "AUTH-009" write_reproposing_entry_stdin
+  assert_eq 0 "$RC" "ledger_add returns 0 despite the conflict"
+  f="$(ledger_dir "$dir")/AUTH-009.yaml"
+  if [ ! -f "$f" ]; then
+    fail "conflicting entry must still land on disk"
+  fi
+  assert_contains "$(cat "$f" 2>/dev/null)" "JWT + Refresh Token" "persisted entry carries its re-proposed claim"
+  assert_contains "$ERR" "review required" "ledger_add warns review-required on stderr"
+  assert_contains "$ERR" "AUTH-001" "the warning names the rejecting decision"
+  rm -rf "$dir"
+}
+
 # --- Slice 2c: ledger_check_scope_conflicts ----------------------------------
 
 # call_check_scope <dir>
@@ -3644,6 +3675,7 @@ test_conflict_loose_match_case_and_whitespace
 test_conflict_only_triggers_on_active_rejecter
 test_conflict_is_read_only_no_mutation
 test_add_still_persists_reproposed_rejected_option
+test_add_warns_on_reproposed_rejected_option_but_persists
 test_scope_conflict_flags_shared_file
 test_scope_conflict_disjoint_files_returns_0
 test_scope_conflict_only_active_pairs
