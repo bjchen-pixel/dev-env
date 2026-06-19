@@ -3377,6 +3377,51 @@ evidence:
   rm -rf "$dir"
 }
 
+# write_nonconflicting_entry_stdin
+#   A fully-valid entry whose claim re-proposes NOTHING that AUTH-001 rejected.
+write_nonconflicting_entry_stdin() {
+  cat <<'EOF'
+date: 2026-06-20
+claim: switch to GraphQL gateway
+rejected:
+  - option: REST monolith
+    why: 擴充困難
+supersedes: []
+evidence:
+  commits: [d44d44d]
+verification:
+  - npm test gateway/*
+note: |
+  approval: 甲方核准 gateway 方向
+EOF
+}
+
+test_add_no_conflict_emits_no_warning() {
+  # MUTANT-KILLER (no false positives): seed AUTH-001 rejecting "JWT + Refresh
+  # Token", then ledger_add a valid entry whose claim ("switch to GraphQL
+  # gateway") re-proposes NONE of the active rejected options. The add must
+  # return 0, land the file, and emit NOTHING to stderr. Kills an "always warn"
+  # mutant that test 1 alone would let pass.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  call_ledger_add "$dir" "GW-001" write_nonconflicting_entry_stdin
+  assert_eq 0 "$RC" "non-conflicting add returns 0"
+  if [ ! -f "$(ledger_dir "$dir")/GW-001.yaml" ]; then
+    fail "non-conflicting entry must land on disk"
+  fi
+  assert_not_contains "$ERR" "review required" "no warning for a non-conflicting entry"
+  assert_eq "" "$ERR" "stderr is empty on a clean, non-conflicting add"
+  rm -rf "$dir"
+}
+
 # --- Slice 2c: ledger_check_scope_conflicts ----------------------------------
 
 # call_check_scope <dir>
@@ -3700,6 +3745,7 @@ test_conflict_is_read_only_no_mutation
 test_add_still_persists_reproposed_rejected_option
 test_add_warns_on_reproposed_rejected_option_but_persists
 test_add_conflict_never_changes_return_code
+test_add_no_conflict_emits_no_warning
 test_scope_conflict_flags_shared_file
 test_scope_conflict_disjoint_files_returns_0
 test_scope_conflict_only_active_pairs
