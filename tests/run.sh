@@ -3354,6 +3354,29 @@ evidence:
   rm -rf "$dir"
 }
 
+test_add_conflict_never_changes_return_code() {
+  # ESCAPE-VALVE HARD LOCK: a conflict is a SIGNAL, never a veto. Under the exact
+  # same drift scenario as the SOUL test, assert the unbreakable invariant in
+  # isolation: rc is STILL 0 and the file STILL lands. This pins "a conflicting
+  # add can never deadlock" as a test — the firewall is structural, not policy.
+  local dir
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  call_ledger_add "$dir" "AUTH-009" write_reproposing_entry_stdin
+  assert_eq 0 "$RC" "a conflict NEVER changes the return code (no veto)"
+  if [ ! -f "$(ledger_dir "$dir")/AUTH-009.yaml" ]; then
+    fail "a conflict NEVER prevents the write (no deadlock)"
+  fi
+  rm -rf "$dir"
+}
+
 # --- Slice 2c: ledger_check_scope_conflicts ----------------------------------
 
 # call_check_scope <dir>
@@ -3676,6 +3699,7 @@ test_conflict_only_triggers_on_active_rejecter
 test_conflict_is_read_only_no_mutation
 test_add_still_persists_reproposed_rejected_option
 test_add_warns_on_reproposed_rejected_option_but_persists
+test_add_conflict_never_changes_return_code
 test_scope_conflict_flags_shared_file
 test_scope_conflict_disjoint_files_returns_0
 test_scope_conflict_only_active_pairs
