@@ -1,0 +1,18 @@
+id: LEDGER-006
+date: 2026-06-19
+status: active
+claim: ledger_add 內嵌非阻擋 conflict 警告——諮詢 check_conflict 但以結構性 return-code 防火牆隔離(輸出抓進變數+|| true,程式無任何對其 exit status 的 if/return),警告只進 stderr、永不阻擋入帳
+rejected:
+  - option: 獨立 draft-check 腳本,入帳前手動跑
+    why: 靠流程記得跑會忘——正是 drift 的失敗模式;失去 can't-forget,違背系統治 drift 的本旨
+  - option: 衝突就擋入帳的硬 gate
+    why: 會卡死——人核准的決策被機器擋住,違反逃生閥憲法(LEDGER-003);防火牆保住「衝突想擋也擋不了」是構造而非政策
+supersedes: []
+evidence:
+  commits: [5e0d312, fad1eaf]
+verification:
+  - bash tests/run.sh
+open_questions: []
+note: |
+  approval: 甲方 2026-06-19 核准。先前我攤開「A 會把逃生閥從零耦合的結構保證降級」的代價,甲方裁定採 A 並要求「結構上不卡死」,遂以 return-code 防火牆實作。記此筆把「零耦合」姿態的推翻顯式入帳。
+  入帳理由:這是 can't-forget 與 never-卡死 的取捨拍板,影響未來所有 add 端的諮詢式檢查設計。
