@@ -3422,6 +3422,31 @@ evidence:
   rm -rf "$dir"
 }
 
+test_add_conflict_warning_stays_off_stdout_and_out_of_file() {
+  # CHANNEL DISCIPLINE: the advisory warning is stderr-ONLY. Under the conflict
+  # scenario, the persisted entry file must NOT contain "review required" (the
+  # warning never contaminates stored data), and stdout must NOT carry it either
+  # (it is not a normal-output channel for advisories).
+  local dir f
+  dir=$(mktemp -d)
+  write_raw_entry "$dir" "AUTH-001" 'claim: JWT only
+status: active
+rejected:
+  - option: JWT + Refresh Token
+    why: 增加複雜度
+supersedes: []
+evidence:
+  commits: [a31f8f2]'
+  call_ledger_add "$dir" "AUTH-009" write_reproposing_entry_stdin
+  # precondition: this path really did warn (so we are proving discipline on the
+  # channel that fires).
+  assert_contains "$ERR" "review required" "precondition: this add actually warns"
+  f="$(ledger_dir "$dir")/AUTH-009.yaml"
+  assert_not_contains "$(cat "$f" 2>/dev/null)" "review required" "warning must NOT be written into the entry file"
+  assert_not_contains "$OUT" "review required" "warning must NOT appear on stdout"
+  rm -rf "$dir"
+}
+
 # --- Slice 2c: ledger_check_scope_conflicts ----------------------------------
 
 # call_check_scope <dir>
@@ -3746,6 +3771,7 @@ test_add_still_persists_reproposed_rejected_option
 test_add_warns_on_reproposed_rejected_option_but_persists
 test_add_conflict_never_changes_return_code
 test_add_no_conflict_emits_no_warning
+test_add_conflict_warning_stays_off_stdout_and_out_of_file
 test_scope_conflict_flags_shared_file
 test_scope_conflict_disjoint_files_returns_0
 test_scope_conflict_only_active_pairs
