@@ -1,0 +1,25 @@
+id: LEDGER-007
+date: 2026-06-21
+status: active
+claim: dev-env-v3 閉環收尾——plan-gate 內建預設翻 enforce(strict-by-default),clone 到任何機器零設定即有牙;逃生閥(V3_EDIT_PLAN_GATE=off)+「workflow surface 永遠放行」保證構造上不 deadlock。閉環=SessionStart 注入(resume+ledger 否定面)→ PreToolUse enforce gate → 決策入帳 → Stop handoff → 冷啟動帶回,全 LIVE 且可攜
+rejected:
+  - option: enforce 設定放 .ai/harness/policy.json(transient)
+    why: .ai/ 被 gitignore,clone 到別台機器不會帶過去 → 不可攜,違背「推展到其他電腦」核心要求
+  - option: 新增 committed .claude/policy.json + 改 policy_get 讀取邏輯
+    why: 比需要的多一塊碼與測試;最笨的可攜機制(翻內建 fallback 一行)已達同樣可攜,符合「挑最笨、避 dead loop」
+  - option: 無逃生閥的硬 enforce
+    why: 會 deadlock,人被機器卡死;逃生閥承 LEDGER-003 憲法線,workflow surface 永遠放行讓「卡不死」是構造非政策
+supersedes: []
+evidence:
+  commits: [c61e9a6, cd84178]
+verification:
+  - bash tests/run.sh
+open_questions:
+  - 被 --adopt 的目標專案 repo 要不要也預設 enforce,或維持 advice 安全預設?
+  - 小任務輕量軌道未建:重流程套在 trivial 任務上過重,待另闢輕量軌
+  - falsifiability(evidence.commits 的 git cat-file 校驗)未做,Type A 不需,另開票
+  - v3-006 context gauge 的 VS Code 面板呈現(companion 擴充)延後
+note: |
+  approval: 甲方 2026-06-21 核准——依老師建議翻 enforce、收尾閉環,先試用一陣子再決定後續。
+  入帳理由:dev-env 閉環完成+可攜的里程碑拍板;後續(adopter 預設、小任務輕量軌道)待試用回饋。
+  實機證據(一次性觀測):fresh clone c61e9a6 → 無核准編輯 exit 2 + V3_EDIT_PLAN_GATE=off → exit 0。
