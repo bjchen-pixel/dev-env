@@ -86,11 +86,15 @@ case "$REL" in
 esac
 
 # --- gate mode ---------------------------------------------------------------
-# precedence: env V3_EDIT_PLAN_GATE > policy.json guards.edit_plan_gate > advice.
+# precedence: env V3_EDIT_PLAN_GATE > policy.json guards.edit_plan_gate > enforce.
+# Built-in default is "enforce" (strict by default): a fresh clone with no
+# policy.json and no env override gets a gate WITH teeth, zero config required.
+# To soften back to advice/off, drop templates/policy.json into
+# <repo>/.ai/harness/policy.json and set guards.edit_plan_gate.
 if [ -n "${V3_EDIT_PLAN_GATE:-}" ]; then
   MODE="$V3_EDIT_PLAN_GATE"
 else
-  MODE=$(policy_get "guards.edit_plan_gate" "advice" "$ROOT")
+  MODE=$(policy_get "guards.edit_plan_gate" "enforce" "$ROOT")
 fi
 [ "$MODE" = "off" ] && exit 0   # off -> silent allow.
 

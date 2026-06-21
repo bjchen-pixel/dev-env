@@ -1,5 +1,5 @@
 {
-  "_comment": "v3-005 plan-gate policy. Copy this file to <repo>/.ai/harness/policy.json. Read by hooks/lib/workflow-state.sh policy_get(). guards.edit_plan_gate is a tri-state gate mode: 'advice' = warn on stdout but never block (safest, default); 'enforce' = block unapproved implementation edits with exit 2 (stderr); 'off' = silent, no guard at all. Precedence at runtime: env V3_EDIT_PLAN_GATE overrides this file, which overrides the built-in 'advice' default.",
+  "_comment": "v3-005 plan-gate policy. The BUILT-IN DEFAULT is now 'enforce' (strict by default): a fresh clone with no policy.json and no env override gets a gate WITH teeth, zero config. This file is the OPT-OUT reference: copy it to <repo>/.ai/harness/policy.json and set guards.edit_plan_gate to soften back. Read by hooks/lib/workflow-state.sh policy_get(). guards.edit_plan_gate is a tri-state gate mode: 'advice' = warn on stdout but never block; 'enforce' = block unapproved implementation edits with exit 2 (stderr); 'off' = silent, no guard at all. Precedence at runtime: env V3_EDIT_PLAN_GATE overrides this file, which overrides the built-in 'enforce' default. The value below is left at 'advice' because this file's purpose is to help someone soften back from the strict built-in default.",
   "guards": {
     "edit_plan_gate": "advice"
   }

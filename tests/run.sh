@@ -376,6 +376,22 @@ test_chain_order_draft_out_of_scope_blocked_by_planstatus_not_contract() {
 
 # --- tests -------------------------------------------------------------------
 
+test_builtin_default_no_env_no_policy_blocks_impl_edit() {
+  # Zero-config fresh-clone path: NO V3_EDIT_PLAN_GATE env, NO policy.json, and
+  # NO approved active plan. The mode must come from the built-in fallback. With
+  # the default flipped to enforce, editing an implementation file is BLOCKED
+  # (exit 2, stderr message). This is "strict by default / scary-portable":
+  # clone to any machine, set nothing, the gate has teeth.
+  local dir
+  dir=$(make_fixture_repo)
+  # make_fixture_repo creates .ai/harness/ but NO policy.json => built-in default.
+  [ ! -e "$dir/.ai/harness/policy.json" ] || fail "fixture must have no policy.json for this test"
+  run_guard_no_env "$dir" "$dir/signals/x.py"
+  assert_eq 2 "$RC" "exit code (built-in default must block)"
+  assert_contains "$ERR" "PlanStatusGuard" "stderr has guard name"
+  rm -rf "$dir"
+}
+
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr() {
   # enforce + NO active plan marker + edit impl file -> exit 2, message on stderr.
   local dir
@@ -1406,16 +1422,17 @@ test_mode_precedence_env_unset_policy_enforce_blocks() {
   rm -rf "$dir"
 }
 
-test_mode_precedence_env_unset_no_policy_defaults_advice() {
-  # env UNSET and NO policy.json -> built-in default `advice`: no active plan +
-  # edit impl -> exit 0 with a stdout advice warning, stderr empty.
+test_mode_precedence_env_unset_no_policy_defaults_enforce() {
+  # env UNSET and NO policy.json -> built-in default is now `enforce` (strict by
+  # default): no active plan + edit impl -> exit 2, blocking message on stderr,
+  # nothing on stdout. This is the scary-portable zero-config clone path.
   local dir
   dir=$(make_fixture_repo)
   # no policy.json, no marker
   run_guard_no_env "$dir" "$dir/signals/x.py"
-  assert_eq 0 "$RC" "exit code (default advice does not block)"
-  assert_contains "$OUT" "PlanStatusGuard" "stdout carries advice warning"
-  assert_eq "" "$ERR" "stderr empty under default advice"
+  assert_eq 2 "$RC" "exit code (default enforce blocks)"
+  assert_contains "$ERR" "PlanStatusGuard" "stderr carries blocking message"
+  assert_eq "" "$OUT" "stdout empty under default enforce"
   rm -rf "$dir"
 }
 
@@ -3691,7 +3708,7 @@ test_policy_get_no_file_returns_default
 test_policy_get_awk_fallback_matches_jq
 test_policy_get_awk_fallback_respects_section
 test_mode_precedence_env_unset_policy_enforce_blocks
-test_mode_precedence_env_unset_no_policy_defaults_advice
+test_mode_precedence_env_unset_no_policy_defaults_enforce
 test_mode_precedence_env_wins_over_policy
 test_policy_template_default_is_advice_and_readable_by_policy_get
 test_install_md_documents_switches_and_killswitch
@@ -3721,6 +3738,7 @@ test_contractscope_noop_approved_no_yaml_block_passes
 test_contractscope_advice_out_of_scope_warns_exit0
 test_contractscope_off_out_of_scope_silent
 test_chain_order_draft_out_of_scope_blocked_by_planstatus_not_contract
+test_builtin_default_no_env_no_policy_blocks_impl_edit
 test_enforce_no_active_plan_edit_impl_blocks_exit2_stderr
 test_enforce_approved_edit_impl_passes_silent
 test_enforce_draft_edit_impl_blocks
