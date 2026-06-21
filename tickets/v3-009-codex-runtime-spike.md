@@ -66,6 +66,45 @@ Codex hooks 機制的事實基礎，需附出處（URL + 段落）：
 
 裁決需指出落點理由，並列出該落點下「下一刀」的建議切片。
 
+## 3.5 D1 預查證據（老師獨立佐證，須由實測再確認）
+
+老師已用官方文件 + 第三方來源預查,結論如下。Codex 執行實測時須以此為對照基準,
+特別針對「官方與第三方衝突處」做可證偽驗證,不得直接採信任一方。
+
+**A. apply_patch 攔截 — 證據互相衝突(本 spike 最關鍵的未決點)**
+- 官方 hooks 文件稱 PreToolUse 可攔截 Bash、apply_patch 檔案編輯、MCP 呼叫;
+  apply_patch 的 matcher 可用 apply_patch/Edit/Write,tool_name 仍報 apply_patch。
+  但官方同段自帶但書:這是 guardrail 而非完整 enforcement 邊界,
+  且「不攔截所有 shell,只攔簡單的」。
+- 兩個獨立第三方來源則稱:目前 hooks 只可靠地對 Bash 觸發,
+  apply_patch 檔案編輯與多數 MCP 呼叫「不觸發」。
+  上游追蹤 issue:openai/codex#16732。
+- 研判:可能是設計意圖 vs 實際裝機版本的差距,或版本差異
+  (hooks 為 experimental,v0.114 首推、預設關閉、不支援 Windows;
+   PreToolUse 約 v0.117 才到)。
+- **對 spike 的影響:D3 不可假設 apply_patch 會被攔,很可能驗出「不觸發」。**
+
+**B. exit code 阻擋語意(官方+社群一致,可信度較高)**
+- PreToolUse 的 exit 2 是阻擋機制(把 hook 從觀察者變把關者)。
+- PostToolUse 的 exit 2 不會 undo 已執行指令,只替換 agent 看到的結果回饋。
+- exit 0 無輸出 = 成功、Codex 繼續。
+
+**C. stdin payload 欄位(第三方來源,須 D4 原文確認)**
+- 共同欄位:session_id、transcript_path、cwd、hook_event_name、model;
+  turn-scoped 事件加 turn_id。
+- Codex 不設專屬環境變數(無 Claude Code 的 CLAUDE_PROJECT_DIR),
+  全部 context 走 stdin JSON,cwd 等同 project dir。
+- PreToolUse 給的是 tool_name + 完整 command(Bash 導向),
+  **未見 Claude Code 的 .tool_input.file_path**。
+- 研判:現有 guard 的 file_path 解析假設很可能不相容,傾向需重寫解析層。
+
+**D. trust 前置(官方)**
+- 專案層 hooks 僅在 project .codex/ 層被 trust 時載入;不信任則整個專案 .codex/ 被忽略,
+  使用者層/系統層仍載入。spike repo 須先讓 Codex trust 本專案,hooks 才會跑。
+
+來源層級註記:官方 = developers.openai.com/codex;第三方 = symposium.dev、
+agenticcontrolplane.com、ai.sulat.com 等。衝突處以本機實測為最終裁決。
+
 ## 4. Codex 計畫書需回答的問題
 
 1. spike repo 怎麼準備？用 dev-env-v3 本體開分支，還是另開乾淨 throwaway repo？（傾向後者，避免污染；請說明選擇）
@@ -83,13 +122,23 @@ Codex hooks 機制的事實基礎，需附出處（URL + 段落）：
 
 **必須以目標檔是否被實際修改判定，不接受只看 hook/process exit 回傳值。**
 
-實驗矩陣，至少涵蓋：
+實驗矩陣,須對「Bash 路徑」與「apply_patch 路徑」各跑一輪:
 
-| 案例 | hook 回傳 | 預期觀測點 | 判定 |
+| 案例 | 工具路徑 | hook 回傳 | 主判據:目標檔/指令副作用 |
 |---|---|---|---|
-| A1 | `exit 0` | 目標檔內容 | 應被改（基準對照組） |
-| A2 | `exit 1` | 目標檔內容 + agent 是否收到訊息 | 待測 |
-| A3 | `exit 2` | 目標檔內容 + agent 是否收到訊息 | 待測 |
+| A1 | apply_patch | exit 0 | 基準對照,應發生 |
+| A2 | apply_patch | exit 1 | 待測 |
+| A3 | apply_patch | exit 2 | 待測:檔案有無被改 |
+| A4 | Bash(寫檔指令) | exit 0 | 基準對照,應發生 |
+| A5 | Bash(寫檔指令) | exit 1 | 待測 |
+| A6 | Bash(寫檔指令) | exit 2 | 待測:指令有無執行 |
+
+判定重點:
+
+- 若 apply_patch 路徑(A2/A3)hook 根本不觸發 → 直接坐實 openai/codex#16732 缺口,
+  Codex 側 plan gate 不能靠攔 file edit,須改攔 Bash。
+- 若 Bash 路徑(A6)exit 2 = 檔案/指令未發生 → enforce 在 Bash 路徑有地板。
+- 兩路徑結果並列,才能判定 Codex 的真實 enforcement 邊界在哪。
 
 每個案例必須記錄三項 side effect：
 
@@ -104,6 +153,10 @@ Codex hooks 機制的事實基礎，需附出處（URL + 段落）：
 - 目標檔**已變**且 agent 無感 → **log-only**。
 
 **驗收門檻**：`exit 1` 與 `exit 2` 各自的歸類必須明確落在 block / warn-through / log-only 之一，且附 before/after 證據。若 `exit 2` 判為 block → enforce 有地板；若兩者皆非 block → enforce 不可行。**不接受「看起來有擋」這類無 side effect 證據的結論。**
+
+- 若 apply_patch 路徑不觸發 hook,而 Bash 路徑 exit 2 可擋:
+  D5 結論應傾向「3 需獨立 adapter」——Codex enforce 須改走 Bash 攔截點,
+  guard 解析層需重寫,不能直接共用 Claude Code 的 file-edit guard。
 
 ### B. stdin payload 對照表
 
