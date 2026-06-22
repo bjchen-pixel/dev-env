@@ -209,3 +209,31 @@ git -C <repo> pull && ./install.sh --adopt <repo>   # adopt 冪等,重跑安全
 **更輕的 kill switch**(不卸載、只停用)見 `INSTALL.md` §4:
 - `export V3_EDIT_PLAN_GATE=off`(環境變數,最高優先,瞬間停 plan gate)
 - `.claude/settings.json` 設 `{ "disableAllHooks": true }`(官方全域停用該 repo 所有 hook)
+
+### 9.7 種入使用者層(`user-config/`)
+
+`user-config/` 是「通用協作層」runtime 檔的版控備份(見 §2)。全新機器 clone 後,
+`~/.claude/` 還沒有這些檔,Claude Code 讀不到三角分工/TDD 紀律與 agent 定義——
+把它們從 `user-config/` 種進 `~/.claude/`:
+
+| repo 內(來源) | 種到(目標) |
+|---|---|
+| `user-config/CLAUDE.md` | `~/.claude/CLAUDE.md` |
+| `user-config/agents/engineer-tdd.md` | `~/.claude/agents/engineer-tdd.md` |
+| `user-config/agents/verifier.md` | `~/.claude/agents/verifier.md` |
+
+Windows(PowerShell)目標為 `C:\Users\<你>\.claude\...`(`agents\` 子目錄若無先建)。
+
+手動複製(Mac/Linux):
+```sh
+mkdir -p ~/.claude/agents
+cp user-config/CLAUDE.md     ~/.claude/CLAUDE.md
+cp user-config/agents/*.md   ~/.claude/agents/
+```
+
+> **注意**
+> - `user-config/` 在 **public** repo——只放可公開的協作方法論 / agent 規格,
+>   密鑰、私人路徑等機敏資訊**絕不**放這裡。
+> - 上面 `cp` 會覆蓋同名檔,**只在缺這些檔的新機器(如 Windows)執行**;
+>   Mac 是源頭,別反向蓋回去。
+> - 後續會由 `install.sh` 自動化此步,採 **copy-if-absent**(目標已存在則跳過、不覆蓋)。
