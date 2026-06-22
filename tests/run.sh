@@ -2393,6 +2393,20 @@ test_menu_choice_quit_or_unknown_maps_to_none() {
   assert_eq "none" "$(choice_modes zzz)" "unknown choice -> none"
 }
 
+test_menu_choice_u_maps_to_update() {
+  # "u"/"U" (update this clone) normalizes to the `update` token so run_menu
+  # dispatches do_update. Locks the new mapping (kills a "u falls through to none"
+  # mutant that would silently make the menu's update entry a no-op).
+  assert_eq "update" "$(choice_modes u)" "choice 'u' -> update"
+  assert_eq "update" "$(choice_modes U)" "choice 'U' -> update (case-insensitive)"
+}
+
+test_menu_choice_p_maps_to_preflight() {
+  # "p"/"P" (just check the dependency environment) normalizes to `preflight`.
+  assert_eq "preflight" "$(choice_modes p)" "choice 'p' -> preflight"
+  assert_eq "preflight" "$(choice_modes P)" "choice 'P' -> preflight (case-insensitive)"
+}
+
 # run_menu_pipe <stdin> <settings_file> <gauge> <src_root>  -> sets RC/OUT/ERR.
 #   Feeds <stdin> (the choice, plus a Mode-B target line when needed) into
 #   run_menu via a pipe (no tty -> exercises the stdin read branch). The Mode A
@@ -2475,6 +2489,25 @@ test_run_menu_choice_quit_does_nothing() {
   after=$(cat "$f")
   assert_eq "$before" "$after" "quit left the settings fixture untouched"
   rm -rf "$dir"
+}
+
+test_run_menu_choice_u_runs_update() {
+  # Feeding "u" must dispatch the update path: do_update runs the (stubbed) pull
+  # then idempotently re-applies Mode A against the INJECTED settings fixture
+  # (never the network, never ~/.claude/). UPDATE_PULL_CMD stubs the only network
+  # step (see lib/menu.sh update_pull).
+  local dir f gauge out_f rc
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  printf '{}\n' > "$f"
+  out_f=$(mktemp)
+  printf 'u\n' \
+    | ( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; \
+        UPDATE_PULL_CMD='printf PULLED' run_menu "$f" "$gauge" "$REPO" ) >"$out_f" 2>&1
+  rc=$?
+  assert_eq 0 "$rc" "run_menu choice u returns 0"
+  assert_contains "$(cat "$out_f")" "PULLED" "choice u ran the (stubbed) update pull"
+  assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "choice u re-applied Mode A"
+  rm -rf "$dir"; rm -f "$out_f"
 }
 
 test_install_sh_no_flags_menu_choice_a_wires_mode_a() {
@@ -3768,10 +3801,13 @@ test_menu_choice_a_maps_to_mode_a
 test_menu_choice_b_maps_to_mode_b
 test_menu_choice_both_maps_to_both
 test_menu_choice_quit_or_unknown_maps_to_none
+test_menu_choice_u_maps_to_update
+test_menu_choice_p_maps_to_preflight
 test_run_menu_choice_a_dispatches_mode_a_only
 test_run_menu_choice_b_reads_target_and_adopts
 test_run_menu_choice_both_dispatches_a_and_b
 test_run_menu_choice_quit_does_nothing
+test_run_menu_choice_u_runs_update
 test_install_sh_no_flags_menu_choice_a_wires_mode_a
 test_install_sh_auto_does_not_enter_menu
 test_update_pull_is_stubbable_via_env

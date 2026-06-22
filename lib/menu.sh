@@ -12,15 +12,19 @@
 # menu_choice_to_modes <choice>
 #   PURE heart of the interactive menu: normalize a user's menu choice into a
 #   stable mode token printed on stdout. No tty, no file — the testable core.
-#     a / A           -> a      (Mode A: machine-level statusLine)
-#     b / B           -> b      (Mode B: adopt into a project)
-#     both / ab / c   -> both   (do both)
-#     q / quit / *    -> none   (quit / empty / anything else: do nothing)
+#     a / A           -> a         (machine-level: statusLine + seed user-config)
+#     b / B           -> b         (adopt the guard into a project)
+#     both / ab / c   -> both      (do both)
+#     u / U           -> update    (update this clone: pull + idempotent reapply)
+#     p / P           -> preflight (just check the dependency environment)
+#     q / quit / *    -> none      (quit / empty / anything else: do nothing)
 menu_choice_to_modes() {
   case "$1" in
     a|A) printf 'a' ;;
     b|B) printf 'b' ;;
     both|ab|c|C) printf 'both' ;;
+    u|U) printf 'update' ;;
+    p|P) printf 'preflight' ;;
     *) printf 'none' ;;
   esac
 }
@@ -59,12 +63,14 @@ menu_seed_user_config() {
 
 run_menu() {
   local settings="$1" gauge="$2" src="$3" choice modes
-  printf 'Choose what to install:\n'
-  printf '  a)    machine-level (Mode A: wire the global statusLine)\n'
-  printf '  b)    adopt into a project (Mode B: --adopt a target repo)\n'
-  printf '  both) do both\n'
-  printf '  q)    quit / skip\n'
-  printf 'Your choice [a/b/both/q]: '
+  printf '這台機器要做什麼?(輸入括號裡的字母)\n'
+  printf '  a)    設定這台機器(新機器首次):裝狀態列 + 把 CLAUDE.md/agents 放進 ~/.claude\n'
+  printf '  b)    把 workflow 護欄裝進一個專案:plan-gate hooks\n'
+  printf '  both) a + b 都做\n'
+  printf '  u)    更新 dev-env 本體:git pull + 冪等重套\n'
+  printf '  p)    只檢查依賴環境就好(啟動時已自動檢查過一次)\n'
+  printf '  q)    離開\n'
+  printf '你的選擇 [a/b/both/u/p/q]: '
   choice=$(menu_read_line)
   modes=$(menu_choice_to_modes "$choice")
   local target
@@ -84,6 +90,17 @@ run_menu() {
       printf 'Target git repository to adopt into: '
       target=$(menu_read_line)
       adopt_repo "$src" "$target"
+      ;;
+    update)
+      # src is this clone's root (install.sh passes "$HERE"). do_update pulls then
+      # idempotently re-applies Mode A; the network pull is stubbable via
+      # UPDATE_PULL_CMD (see lib/menu.sh do_update / update_pull).
+      do_update "$src" "$settings" "$gauge"
+      ;;
+    preflight)
+      # Just (re)print the dependency doctor. preflight_report is pure (no writes)
+      # and is sourced by install.sh before run_menu, so it is in scope here.
+      preflight_report
       ;;
   esac
 }
