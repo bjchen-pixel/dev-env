@@ -44,6 +44,19 @@ menu_read_line() {
 #     both -> Mode A, then read target + Mode B
 #     none -> do nothing
 #   The caller must have sourced lib/settings-merge.sh and lib/adopt.sh.
+# menu_seed_user_config <src_root>
+#   SIDE-EFFECTING: seed the version-controlled user-level runtime files
+#   (<src_root>/user-config/*) into the user-level Claude dir, copy-if-absent,
+#   so the machine-setting menu choice lands them in one run (matching
+#   install.sh --mode-a). Dest is CLAUDE_USER_DIR (injectable for tests; defaults
+#   to ~/.claude). Requires the caller to have sourced lib/user-config.sh.
+menu_seed_user_config() {
+  local src_root="$1" dest
+  dest="${CLAUDE_USER_DIR:-$HOME/.claude}"
+  printf 'Seeding user-level runtime files into %s\n' "$dest"
+  deploy_user_config "$src_root/user-config" "$dest"
+}
+
 run_menu() {
   local settings="$1" gauge="$2" src="$3" choice modes
   printf 'Choose what to install:\n'
@@ -58,6 +71,7 @@ run_menu() {
   case "$modes" in
     a)
       apply_statusline "$settings" "$gauge"
+      menu_seed_user_config "$src"
       ;;
     b)
       printf 'Target git repository to adopt into: '
@@ -66,6 +80,7 @@ run_menu() {
       ;;
     both)
       apply_statusline "$settings" "$gauge"
+      menu_seed_user_config "$src"
       printf 'Target git repository to adopt into: '
       target=$(menu_read_line)
       adopt_repo "$src" "$target"

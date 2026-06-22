@@ -11,6 +11,7 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 . "$HERE/lib/settings-merge.sh"
 . "$HERE/lib/adopt.sh"
 . "$HERE/lib/menu.sh"
+. "$HERE/lib/user-config.sh"
 
 # Canonical absolute path to THIS clone's context-gauge.sh (Mode A points the
 # user-level statusLine command here). Same HERE-based technique as Slice 1.
@@ -19,6 +20,14 @@ GAUGE_PATH="$HERE/statusline/context-gauge.sh"
 # User-level settings target. Injectable via SETTINGS_FILE so tests never touch
 # the real ~/.claude/. Defaults to the real user-level file otherwise.
 SETTINGS_FILE="${SETTINGS_FILE:-$HOME/.claude/settings.json}"
+
+# Version-controlled user-level runtime seed (CLAUDE.md + agents/*). A normal
+# machine-level install seeds these into the user-level Claude dir (copy-if-
+# absent), so a fresh clone lands the collaboration discipline without an extra
+# flag. CLAUDE_USER_DIR is injectable (same technique as SETTINGS_FILE) so tests
+# point it at a tmp dir, never the real ~/.claude/.
+USER_CONFIG_SRC="$HERE/user-config"
+CLAUDE_USER_DIR="${CLAUDE_USER_DIR:-$HOME/.claude}"
 
 # --- official download links for tools we NEVER auto-install -----------------
 official_link() {
@@ -174,7 +183,10 @@ fi
 if [ "$MODE_A" -eq 1 ]; then
   printf '\nMode A — wiring the global statusLine into %s\n' "$SETTINGS_FILE"
   apply_statusline "$SETTINGS_FILE" "$GAUGE_PATH"
-  exit $?
+  rc=$?
+  printf '\nSeeding user-level runtime files into %s\n' "$CLAUDE_USER_DIR"
+  deploy_user_config "$USER_CONFIG_SRC" "$CLAUDE_USER_DIR"
+  exit "$rc"
 fi
 
 # --- interactive main menu ---------------------------------------------------

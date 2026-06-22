@@ -2031,8 +2031,9 @@ test_install_sh_mode_a_writes_statusline_to_injected_settings_file() {
   # must merge a statusLine whose command points at THIS repo's clone of
   # context-gauge.sh (computed install.sh's own way), preserving other keys.
   # Rerun is idempotent (no-op). This test must NOT touch the real HOME.
-  local dir f gauge out1 out2 c1 c2 bindir
+  local dir f gauge out1 out2 c1 c2 bindir udir
   dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  udir="$dir/claude"   # injected CLAUDE_USER_DIR so the seed never hits real ~/.claude/
   printf '{"effortLevel":"high"}\n' > "$f"
   # PATH with the full tool set (cp/mv/date/ls for backup+write) PLUS git+jq so
   # preflight passes and the jq merge runs. mask_jq_bin gives the full core set;
@@ -2040,12 +2041,12 @@ test_install_sh_mode_a_writes_statusline_to_injected_settings_file() {
   bindir=$(mask_jq_bin)
   ln -sf "$(command -v git)" "$bindir/git"
   ln -sf "$(command -v jq)" "$bindir/jq"
-  out1=$( PATH="$bindir" SETTINGS_FILE="$f" bash "$INSTALL_SH" --mode-a 2>&1 )
+  out1=$( PATH="$bindir" SETTINGS_FILE="$f" CLAUDE_USER_DIR="$udir" bash "$INSTALL_SH" --mode-a 2>&1 )
   assert_eq 0 "$?" "install.sh --mode-a returns 0"
   assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "install.sh wired statusLine to local gauge clone"
   assert_eq "high" "$(jq -r '.effortLevel' "$f")" "install.sh preserved the existing key"
   c1=$(cat "$f")
-  out2=$( PATH="$bindir" SETTINGS_FILE="$f" bash "$INSTALL_SH" --mode-a 2>&1 )
+  out2=$( PATH="$bindir" SETTINGS_FILE="$f" CLAUDE_USER_DIR="$udir" bash "$INSTALL_SH" --mode-a 2>&1 )
   c2=$(cat "$f")
   assert_eq "$c1" "$c2" "install.sh --mode-a rerun is idempotent (no change)"
   assert_contains "$out2" "no-op" "install.sh --mode-a rerun reports no-op"
@@ -2401,8 +2402,8 @@ run_menu_pipe() {
   local out_f err_f
   out_f=$(mktemp); err_f=$(mktemp)
   printf '%s' "$stdin_data" \
-    | ( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; . "$ADOPT_LIB"; \
-        run_menu "$settings" "$gauge" "$src" ) >"$out_f" 2>"$err_f"
+    | ( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; . "$ADOPT_LIB"; . "$USER_CONFIG_LIB"; \
+        CLAUDE_USER_DIR="$(mktemp -d)" run_menu "$settings" "$gauge" "$src" ) >"$out_f" 2>"$err_f"
   RC=$?
   OUT=$(cat "$out_f"); ERR=$(cat "$err_f"); rm -f "$out_f" "$err_f"
 }
@@ -2481,13 +2482,16 @@ test_install_sh_no_flags_menu_choice_a_wires_mode_a() {
   # runs preflight then the menu. Feeding "a" on stdin must wire Mode A into the
   # INJECTED SETTINGS_FILE fixture (never ~/.claude/). PATH carries the full core
   # set + git + jq so preflight passes and the merge runs.
-  local dir f gauge bindir out rc
+  local dir f gauge bindir out rc udir
   dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  udir="$dir/claude"   # injected CLAUDE_USER_DIR so the seed never hits real ~/.claude/
   printf '{"effortLevel":"high"}\n' > "$f"
   bindir=$(mask_jq_bin)
   ln -sf "$(command -v git)" "$bindir/git"
   ln -sf "$(command -v jq)" "$bindir/jq"
-  out=$( printf 'a\n' | PATH="$bindir" SETTINGS_FILE="$f" bash "$INSTALL_SH" 2>&1 ); rc=$?
+  ln -sf "$(command -v find)" "$bindir/find"
+  ln -sf "$(command -v mkdir)" "$bindir/mkdir"
+  out=$( printf 'a\n' | PATH="$bindir" SETTINGS_FILE="$f" CLAUDE_USER_DIR="$udir" bash "$INSTALL_SH" 2>&1 ); rc=$?
   assert_eq 0 "$rc" "install.sh (no flags) + menu choice a returns 0"
   assert_eq "bash \"$gauge\"" "$(jq -r '.statusLine.command' "$f")" "menu choice a wired statusLine via install.sh"
   assert_eq "high" "$(jq -r '.effortLevel' "$f")" "existing key preserved"
@@ -3713,6 +3717,50 @@ test_deploy_user_config_partial_preserves_modified_existing() {
   rm -rf "$src" "$dest"
 }
 
+test_install_sh_mode_a_seeds_user_config_into_injected_claude_dir() {
+  # END-TO-END (Mode A through install.sh): a normal machine-level install must
+  # ALSO seed the version-controlled user-config/ files into ~/.claude/, so a
+  # fresh clone lands the collaboration discipline + agent definitions WITHOUT an
+  # extra flag. The dest is INJECTED via CLAUDE_USER_DIR (a tmp dir — NEVER the
+  # real ~/.claude/). Assert the three seed files land with the repo's content.
+  local dir f udir bindir
+  dir=$(mktemp -d); f="$dir/settings.json"
+  udir="$dir/claude"   # injected CLAUDE_USER_DIR (does not exist yet)
+  printf '{}\n' > "$f"
+  bindir=$(mask_jq_bin)
+  ln -sf "$(command -v git)" "$bindir/git"
+  ln -sf "$(command -v jq)" "$bindir/jq"
+  # the seed path uses find + mkdir (POSIX-core, same tier as cp/mv adopt uses).
+  ln -sf "$(command -v find)" "$bindir/find"
+  ln -sf "$(command -v mkdir)" "$bindir/mkdir"
+  PATH="$bindir" SETTINGS_FILE="$f" CLAUDE_USER_DIR="$udir" bash "$INSTALL_SH" --mode-a >/dev/null 2>&1
+  assert_eq 0 "$?" "install.sh --mode-a returns 0"
+  assert_eq "$(cat "$REPO/user-config/CLAUDE.md")" "$(cat "$udir/CLAUDE.md" 2>/dev/null)" "CLAUDE.md seeded from repo user-config"
+  assert_eq "$(cat "$REPO/user-config/agents/engineer-tdd.md")" "$(cat "$udir/agents/engineer-tdd.md" 2>/dev/null)" "agents/engineer-tdd.md seeded from repo user-config"
+  assert_eq "$(cat "$REPO/user-config/agents/verifier.md")" "$(cat "$udir/agents/verifier.md" 2>/dev/null)" "agents/verifier.md seeded from repo user-config"
+  rm -rf "$dir" "$bindir"
+}
+
+test_run_menu_choice_a_also_seeds_user_config() {
+  # The menu's machine-setting choice (a) must seed the user-config files beside
+  # wiring Mode A — same one-run guarantee as install.sh --mode-a. The seed src
+  # is <src_root>/user-config; the dest is injected via CLAUDE_USER_DIR (tmp dir,
+  # never the real ~/.claude/). Assert the three seed files land.
+  local dir f gauge udir out_f
+  dir=$(mktemp -d); f="$dir/settings.json"; gauge=$(repo_gauge_path)
+  udir="$dir/claude"
+  printf '{}\n' > "$f"
+  out_f=$(mktemp)
+  printf 'a\n' \
+    | ( . "$MENU_LIB"; . "$SETTINGS_MERGE_LIB"; . "$ADOPT_LIB"; . "$USER_CONFIG_LIB"; \
+        CLAUDE_USER_DIR="$udir" run_menu "$f" "$gauge" "$REPO" ) >"$out_f" 2>&1
+  assert_eq 0 "$?" "run_menu choice a returns 0"
+  assert_eq "$(cat "$REPO/user-config/CLAUDE.md")" "$(cat "$udir/CLAUDE.md" 2>/dev/null)" "menu choice a seeded CLAUDE.md"
+  assert_eq "$(cat "$REPO/user-config/agents/engineer-tdd.md")" "$(cat "$udir/agents/engineer-tdd.md" 2>/dev/null)" "menu choice a seeded agents/engineer-tdd.md"
+  assert_eq "$(cat "$REPO/user-config/agents/verifier.md")" "$(cat "$udir/agents/verifier.md" 2>/dev/null)" "menu choice a seeded agents/verifier.md"
+  rm -f "$out_f"; rm -rf "$dir"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3877,6 +3925,8 @@ test_scope_conflict_pair_dedup_no_self
 test_deploy_user_config_fresh_dest_seeds_all_files
 test_deploy_user_config_rerun_all_exist_skips_idempotent
 test_deploy_user_config_partial_preserves_modified_existing
+test_install_sh_mode_a_seeds_user_config_into_injected_claude_dir
+test_run_menu_choice_a_also_seeds_user_config
 "
 
 for t in $TESTS; do
