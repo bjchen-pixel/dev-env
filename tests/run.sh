@@ -3640,6 +3640,38 @@ evidence:
   rm -rf "$dir"
 }
 
+# --- v3 user-config seeding (lib/user-config.sh) -----------------------------
+
+USER_CONFIG_LIB="$REPO/lib/user-config.sh"
+
+# uc_src_fixture — builds a tmp SRC tree mirroring the real user-config/ seed
+#   shape (a top-level file + a nested agents/ subdir), echoes its path. The
+#   contents are unique markers so copy fidelity is assertable.
+uc_src_fixture() {
+  local src
+  src=$(mktemp -d)
+  printf 'CLAUDE_SEED_MARKER\n' > "$src/CLAUDE.md"
+  mkdir -p "$src/agents"
+  printf 'ENGINEER_SEED_MARKER\n' > "$src/agents/engineer-tdd.md"
+  printf 'VERIFIER_SEED_MARKER\n' > "$src/agents/verifier.md"
+  printf '%s' "$src"
+}
+
+test_deploy_user_config_fresh_dest_seeds_all_files() {
+  # Fresh (empty) dest: every file under src is seeded to the matching relative
+  # path, contents identical to src, and the nested agents/ subdir is created.
+  local src dest out
+  src=$(uc_src_fixture)
+  dest=$(mktemp -d)
+  out=$( . "$USER_CONFIG_LIB"; deploy_user_config "$src" "$dest" )
+  assert_eq 0 "$?" "deploy_user_config returns 0"
+  assert_eq "$(cat "$src/CLAUDE.md")" "$(cat "$dest/CLAUDE.md" 2>/dev/null)" "CLAUDE.md seeded with src content"
+  assert_eq "$(cat "$src/agents/engineer-tdd.md")" "$(cat "$dest/agents/engineer-tdd.md" 2>/dev/null)" "agents/engineer-tdd.md seeded"
+  assert_eq "$(cat "$src/agents/verifier.md")" "$(cat "$dest/agents/verifier.md" 2>/dev/null)" "agents/verifier.md seeded"
+  if [ ! -d "$dest/agents" ]; then fail "nested agents/ subdir must be created"; fi
+  rm -rf "$src" "$dest"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3801,6 +3833,7 @@ test_scope_conflict_disjoint_files_returns_0
 test_scope_conflict_only_active_pairs
 test_scope_conflict_is_read_only_no_mutation
 test_scope_conflict_pair_dedup_no_self
+test_deploy_user_config_fresh_dest_seeds_all_files
 "
 
 for t in $TESTS; do
