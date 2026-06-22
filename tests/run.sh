@@ -3672,6 +3672,47 @@ test_deploy_user_config_fresh_dest_seeds_all_files() {
   rm -rf "$src" "$dest"
 }
 
+test_deploy_user_config_rerun_all_exist_skips_idempotent() {
+  # Rerun after a full seed: every target already exists, so the second run
+  # reports skipped for all of them, mutates NO file (byte-identical tree), and
+  # still returns 0 (idempotent).
+  local src dest out before after
+  src=$(uc_src_fixture)
+  dest=$(mktemp -d)
+  ( . "$USER_CONFIG_LIB"; deploy_user_config "$src" "$dest" ) >/dev/null
+  before=$( cd "$dest" && find . -type f | sort | while IFS= read -r f; do printf '%s:%s\n' "$f" "$(cat "$f")"; done )
+  out=$( . "$USER_CONFIG_LIB"; deploy_user_config "$src" "$dest" )
+  assert_eq 0 "$?" "rerun returns 0 (idempotent)"
+  assert_contains "$out" "skipped CLAUDE.md" "CLAUDE.md reported skipped on rerun"
+  assert_contains "$out" "skipped agents/engineer-tdd.md" "agents/engineer-tdd.md reported skipped on rerun"
+  assert_contains "$out" "skipped agents/verifier.md" "agents/verifier.md reported skipped on rerun"
+  assert_not_contains "$out" "seeded" "rerun seeds nothing"
+  after=$( cd "$dest" && find . -type f | sort | while IFS= read -r f; do printf '%s:%s\n' "$f" "$(cat "$f")"; done )
+  assert_eq "$before" "$after" "rerun mutated no file (tree byte-identical)"
+  rm -rf "$src" "$dest"
+}
+
+test_deploy_user_config_partial_preserves_modified_existing() {
+  # Pre-place a dest CLAUDE.md whose content has been HAND-MODIFIED (differs
+  # from src). A seed run must NOT overwrite it (its modified content survives
+  # verbatim and it is reported skipped), while the still-absent agents/* files
+  # are seeded. This is the no-clobber guarantee on a partially-populated dest.
+  local src dest out modified
+  src=$(uc_src_fixture)
+  dest=$(mktemp -d)
+  modified='LOCAL_EDITS_DO_NOT_CLOBBER'
+  printf '%s\n' "$modified" > "$dest/CLAUDE.md"
+  out=$( . "$USER_CONFIG_LIB"; deploy_user_config "$src" "$dest" )
+  assert_eq 0 "$?" "partial-dest run returns 0"
+  assert_eq "$modified" "$(cat "$dest/CLAUDE.md")" "modified CLAUDE.md content preserved (not clobbered)"
+  assert_contains "$out" "skipped CLAUDE.md" "existing CLAUDE.md reported skipped"
+  # the absent agents/* files get seeded from src.
+  assert_eq "$(cat "$src/agents/engineer-tdd.md")" "$(cat "$dest/agents/engineer-tdd.md" 2>/dev/null)" "absent agents/engineer-tdd.md seeded"
+  assert_eq "$(cat "$src/agents/verifier.md")" "$(cat "$dest/agents/verifier.md" 2>/dev/null)" "absent agents/verifier.md seeded"
+  assert_contains "$out" "seeded agents/engineer-tdd.md" "absent file reported seeded"
+  rm -rf "$src" "$dest"
+}
+
 # --- driver ------------------------------------------------------------------
 
 TESTS="
@@ -3834,6 +3875,8 @@ test_scope_conflict_only_active_pairs
 test_scope_conflict_is_read_only_no_mutation
 test_scope_conflict_pair_dedup_no_self
 test_deploy_user_config_fresh_dest_seeds_all_files
+test_deploy_user_config_rerun_all_exist_skips_idempotent
+test_deploy_user_config_partial_preserves_modified_existing
 "
 
 for t in $TESTS; do
